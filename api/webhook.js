@@ -99,10 +99,6 @@ export default async function handler(req, res) {
   if (!msg?.text) return res.status(200).end('ok');
   const text = msg.text.trim().toLowerCase();
 
-  // Responder a Telegram inmediatamente para evitar timeout
-  res.status(200).end('ok');
-
-  // Procesar el comando de forma asíncrona
   if (text === 'analizar') await handleAnalisis();
   else if (text === 'si' || text === 'sí') await handleConfirm();
   else if (text === 'no') await handleCancel();
@@ -113,4 +109,6 @@ export default async function handler(req, res) {
       : '📋 Sin señales pendientes.'
     ).catch(() => {});
   }
+
+  res.status(200).end('ok');
 }
