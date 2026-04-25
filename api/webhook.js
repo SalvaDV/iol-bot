@@ -3,6 +3,8 @@ import { sendMessage } from '../lib/telegram.js';
 import { getPendingSignal, updateSignalStatus, logTrade, savePendingSignal } from '../lib/supabase.js';
 import { runAnalysis } from '../lib/analysis.js';
 
+export const config = { runtime: 'nodejs', maxDuration: 60 };
+
 async function handleAnalisis() {
   await sendMessage('⏳ Analizando mercado...');
   try {
@@ -79,15 +81,28 @@ async function handleCancel() {
   }
 }
 
-export default async function handler(request) {
-  if (request.method !== 'POST') return new Response('ok');
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(200).end('ok');
+
   let body;
-  try { body = await request.json(); } catch { return new Response('ok'); }
+  try {
+    body = await new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', chunk => { data += chunk; });
+      req.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    });
+  } catch {
+    return res.status(200).end('ok');
+  }
 
   const msg = body?.message;
-  if (!msg?.text) return new Response('ok');
+  if (!msg?.text) return res.status(200).end('ok');
   const text = msg.text.trim().toLowerCase();
 
+  // Responder a Telegram inmediatamente para evitar timeout
+  res.status(200).end('ok');
+
+  // Procesar el comando de forma asíncrona
   if (text === 'analizar') await handleAnalisis();
   else if (text === 'si' || text === 'sí') await handleConfirm();
   else if (text === 'no') await handleCancel();
@@ -98,6 +113,4 @@ export default async function handler(request) {
       : '📋 Sin señales pendientes.'
     ).catch(() => {});
   }
-
-  return new Response('ok');
 }
