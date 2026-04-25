@@ -1,9 +1,8 @@
+import { waitUntil } from '@vercel/functions';
 import { getToken, crearOrden, getPortfolio } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import { getPendingSignal, updateSignalStatus, logTrade, savePendingSignal } from '../lib/supabase.js';
 import { runAnalysis } from '../lib/analysis.js';
-
-export const config = { runtime: 'edge' };
 
 async function handleAnalisis() {
   try {
@@ -80,7 +79,7 @@ async function handleCancel() {
   }
 }
 
-export default async function handler(request, context) {
+export default async function handler(request) {
   if (request.method !== 'POST') return new Response('ok');
   let body;
   try { body = await request.json(); } catch { return new Response('ok'); }
@@ -89,11 +88,11 @@ export default async function handler(request, context) {
   if (!msg?.text) return new Response('ok');
   const text = msg.text.trim().toLowerCase();
 
-  if (text === 'analizar') context.waitUntil(handleAnalisis());
-  else if (text === 'si' || text === 'sí') context.waitUntil(handleConfirm());
-  else if (text === 'no') context.waitUntil(handleCancel());
+  if (text === 'analizar') waitUntil(handleAnalisis());
+  else if (text === 'si' || text === 'sí') waitUntil(handleConfirm());
+  else if (text === 'no') waitUntil(handleCancel());
   else if (text === 'estado') {
-    context.waitUntil(
+    waitUntil(
       getPendingSignal().then(p =>
         sendMessage(p
           ? `📋 Pendiente: *${p.simbolo}* ${p.dir} @ $${p.precio}`

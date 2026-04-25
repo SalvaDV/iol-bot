@@ -1,8 +1,6 @@
 import { sendMessage } from '../lib/telegram.js';
 import { savePendingSignal } from '../lib/supabase.js';
 
-export const config = { runtime: 'edge' };
-
 export default async function handler(request) {
   if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
   const apiKey = request.headers.get('x-api-key');
