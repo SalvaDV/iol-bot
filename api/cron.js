@@ -1,7 +1,6 @@
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 export default async function handler(req, res) {
-  // Vercel cron sends Authorization: Bearer {CRON_SECRET}
   const auth = req.headers['authorization'];
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -15,13 +14,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { runAnalysis } = await import('../lib/analysis.js');
-    const { savePendingSignal } = await import('../lib/supabase.js');
+    const { sendMessage } = await import('../lib/telegram.js');
+    await sendMessage('🕐 *Análisis automático iniciado*\nEsperá 1-2 minutos para el reporte completo...');
 
-    const signal = await runAnalysis();
-    if (signal) await savePendingSignal({ ...signal, status: 'pending' });
+    // Dispara el análisis IA de forma independiente
+    fetch('https://iol-bot.vercel.app/api/analyze', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+    }).catch(() => {});
 
-    res.json({ ok: true, signal: !!signal });
+    res.json({ ok: true });
   } catch (err) {
     try {
       const { sendMessage } = await import('../lib/telegram.js');

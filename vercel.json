@@ -7,8 +7,9 @@
     { "path": "/api/cron", "schedule": "30 19 * * 1-5" }
   ],
   "functions": {
-    "api/webhook.js": { "maxDuration": 60 },
-    "api/signal.js":  { "maxDuration": 30 },
-    "api/cron.js":    { "maxDuration": 60 }
+    "api/webhook.js":  { "maxDuration": 60 },
+    "api/signal.js":   { "maxDuration": 30 },
+    "api/cron.js":     { "maxDuration": 60 },
+    "api/analyze.js":  { "maxDuration": 60 }
   }
 }
