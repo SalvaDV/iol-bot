@@ -1,18 +1,17 @@
 import { getToken, crearOrden, getPortfolio } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import { getPendingSignal, updateSignalStatus, logTrade, savePendingSignal } from '../lib/supabase.js';
+import { runAdvisor } from '../lib/advisor.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 async function handleAnalisis() {
-  await sendMessage(
-    '🔍 *Análisis completo iniciado*\n\nEstoy consultando noticias, mercados globales y análisis técnico. Dame 1-2 minutos...'
-  );
-  // Dispara el análisis IA de forma independiente — no esperamos respuesta
-  fetch('https://iol-bot.vercel.app/api/analyze', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
-  }).catch(() => {});
+  await sendMessage('🔍 *Analizando mercado...*\nConsultando noticias, técnicos y portafolio. Tardará ~40 segundos.');
+  try {
+    await runAdvisor();
+  } catch (err) {
+    await sendMessage(`❌ Error en análisis: ${err.message}`).catch(() => {});
+  }
 }
 
 async function handleConfirm() {
