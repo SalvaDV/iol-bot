@@ -67,12 +67,13 @@ async function handleConfirmN(n) {
     await logTrade({
       fecha: new Date().toISOString().slice(0, 10),
       hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
-      instrumento: pending.simbolo,
+      simbolo: pending.simbolo,
       accion: pending.dir,
-      precio_ejecucion: pending.precio,
+      precio: pending.precio,
       cantidad: cantidadFinal,
-      orden_id: orden.numero || orden.id || null,
-      signals: pending.signals,
+      monto: cantidadFinal * pending.precio,
+      senales: pending.signals,
+      efectivo_pre: pending.ef_pre,
     });
 
     await sendMessage(
