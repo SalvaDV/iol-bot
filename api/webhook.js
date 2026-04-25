@@ -1,15 +1,15 @@
-import { waitUntil } from '@vercel/functions';
 import { getToken, crearOrden, getPortfolio } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import { getPendingSignal, updateSignalStatus, logTrade, savePendingSignal } from '../lib/supabase.js';
 import { runAnalysis } from '../lib/analysis.js';
 
 async function handleAnalisis() {
+  await sendMessage('⏳ Analizando mercado...');
   try {
     const signal = await runAnalysis();
     if (signal) await savePendingSignal({ ...signal, status: 'pending' });
   } catch (err) {
-    await sendMessage(`❌ Error en análisis: ${err.message}`);
+    try { await sendMessage(`❌ Error en análisis: ${err.message}`); } catch {}
   }
 }
 
@@ -62,7 +62,7 @@ async function handleConfirm() {
       `🔑 Orden #${orden.numero || orden.id || 'N/A'}`
     );
   } catch (err) {
-    await sendMessage(`❌ Error ejecutando orden: ${err.message}`);
+    try { await sendMessage(`❌ Error ejecutando orden: ${err.message}`); } catch {}
     const p = await getPendingSignal().catch(() => null);
     if (p) await updateSignalStatus(p.id, 'error').catch(() => {});
   }
@@ -75,7 +75,7 @@ async function handleCancel() {
     await updateSignalStatus(pending.id, 'cancelado');
     await sendMessage(`🚫 Operación en *${pending.simbolo}* cancelada.`);
   } catch (err) {
-    await sendMessage(`❌ Error cancelando: ${err.message}`);
+    try { await sendMessage(`❌ Error cancelando: ${err.message}`); } catch {}
   }
 }
 
@@ -88,17 +88,15 @@ export default async function handler(request) {
   if (!msg?.text) return new Response('ok');
   const text = msg.text.trim().toLowerCase();
 
-  if (text === 'analizar') waitUntil(handleAnalisis());
-  else if (text === 'si' || text === 'sí') waitUntil(handleConfirm());
-  else if (text === 'no') waitUntil(handleCancel());
+  if (text === 'analizar') await handleAnalisis();
+  else if (text === 'si' || text === 'sí') await handleConfirm();
+  else if (text === 'no') await handleCancel();
   else if (text === 'estado') {
-    waitUntil(
-      getPendingSignal().then(p =>
-        sendMessage(p
-          ? `📋 Pendiente: *${p.simbolo}* ${p.dir} @ $${p.precio}`
-          : '📋 Sin señales pendientes.')
-      )
-    );
+    const p = await getPendingSignal().catch(() => null);
+    await sendMessage(p
+      ? `📋 Pendiente: *${p.simbolo}* ${p.dir} @ $${p.precio}`
+      : '📋 Sin señales pendientes.'
+    ).catch(() => {});
   }
 
   return new Response('ok');
