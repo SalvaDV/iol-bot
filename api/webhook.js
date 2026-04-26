@@ -54,6 +54,19 @@ async function handleConfirmN(n) {
         await updateSignalStatus(pending.id, 'cancelado');
         return;
       }
+    } else if (!cantidadFinal || cantidadFinal < 1) {
+      // Recalcular cantidad con efectivo actual si no se guardó al analizar
+      const pctSignal = pending.signals?.find(s => s?.startsWith('pct:'));
+      const pct = pctSignal ? parseFloat(pctSignal.replace('pct:', '')) : 0.15;
+      const { getCuenta } = await import('../lib/iol.js');
+      const cuenta = await getCuenta(token);
+      const efectivoActual = cuenta.cuentas?.[0]?.disponible ?? 0;
+      cantidadFinal = Math.floor(efectivoActual * pct / pending.precio);
+      if (!cantidadFinal || cantidadFinal < 1) {
+        await sendMessage(`⚠️ Efectivo insuficiente para comprar ${pending.simbolo} (necesitás al menos $${pending.precio} ARS).`);
+        await updateSignalStatus(pending.id, 'cancelado');
+        return;
+      }
     }
 
     const orden = await crearOrden(token, {
