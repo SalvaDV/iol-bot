@@ -22,6 +22,11 @@ function getPct(pending) {
   return sig ? parseFloat(sig.replace('pct:', '')) : 0.15;
 }
 
+function getMercado(pending) {
+  const sig = pending.signals?.find(s => s?.startsWith('mercado:'));
+  return sig ? sig.replace('mercado:', '') : 'bcba';
+}
+
 async function handleConfirmN(n, { skipCheck = false } = {}) {
   try {
     const signals = await getPendingSignals();
@@ -91,21 +96,18 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     }
 
     // Precio en tiempo real
+    const mercadoSignal = getMercado(pending);
     let precioLive = null;
     let precioError = null;
+    let mercadoFinal = mercadoSignal;
     try {
+      // getCotizacion ya prueba múltiples mercados internamente
       const cot = await getCotizacion(token, pending.simbolo);
       precioLive = extractPrecio(cot);
+      mercadoFinal = cot._mercado || mercadoSignal;
       if (!precioLive) precioError = `campos: ${Object.keys(cot).join(',')} valores: ${JSON.stringify(cot).slice(0, 200)}`;
     } catch (e) {
       precioError = e.message;
-      // Intentar con ticker alternativo (ej: NVDA → NVDAD para CEDEARs en USD)
-      try {
-        const symAlt = pending.simbolo.endsWith('D') ? pending.simbolo.slice(0, -1) : pending.simbolo + 'D';
-        const cot2 = await getCotizacion(token, symAlt);
-        precioLive = extractPrecio(cot2);
-        if (precioLive) precioError = null;
-      } catch { /* ignorar */ }
     }
 
     let cantidadFinal, precioLimite;
@@ -169,6 +171,7 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     }
 
     const orden = await crearOrden(token, {
+      mercado: mercadoFinal,
       simbolo: pending.simbolo,
       cantidad: cantidadFinal,
       precio: precioLimite,
@@ -390,11 +393,15 @@ export default async function handler(req, res) {
           const lines = signals.map(s => {
             const num = s.signals?.[0]?.replace('propuesta:', '') ?? '?';
             const pctSig = s.signals?.find(x => x?.startsWith('pct:'));
-            const pct = pctSig ? `${(parseFloat(pctSig.replace('pct:', '')) * 100).toFixed(0)}%` : '';
+            const pctVal = pctSig ? parseFloat(pctSig.replace('pct:', '')) : null;
+            const pctStr = pctVal != null ? `${(pctVal * 100).toFixed(0)}%` : '';
+            // Mostrar monto en ARS si tenemos ef_pre y pct, aunque no tengamos precio exacto
+            const montoARS = pctVal && s.ef_pre ? `$${Math.round(s.ef_pre * pctVal).toLocaleString('es-AR')} ARS` : null;
             let detalle;
-            if (s.dir === 'dolar') detalle = `💵 DOLARIZAR ${pct}`;
+            if (s.dir === 'dolar') detalle = `💵 DOLARIZAR ${pctStr}`;
             else if (s.dir === 'venta') detalle = '📉 VENTA posición completa';
-            else detalle = `📈 COMPRA ${s.cantidad ? `${s.cantidad} u. @ $${s.precio}` : `${pct} efectivo`}`;
+            else if (s.cantidad && s.precio) detalle = `📈 COMPRA ${s.cantidad} u. @ $${s.precio}${montoARS ? ` (≈${montoARS})` : ''}`;
+            else detalle = `📈 COMPRA ≈${montoARS ?? pctStr} del efectivo`;
             return `${num}. *${s.simbolo}* — ${detalle}`;
           }).join('\n');
           await sendMessage(`📋 *Propuestas pendientes:*\n\n${lines}\n\nRespondé */si 1/2/3* o */no*`);
