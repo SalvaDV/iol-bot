@@ -181,7 +181,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     // Buscar el número de orden en todos los campos posibles
     const ordenNum = orden.numero ?? orden.id ?? orden.nroOperacion ?? orden.numeroOperacion ??
                      orden.nro ?? orden.orderNumber ?? orden.numeroPedido ?? null;
-    console.log('[crearOrden] response keys:', Object.keys(orden).join(','), 'full:', JSON.stringify(orden).slice(0, 300));
+    const ordenRaw = JSON.stringify(orden).slice(0, 400);
+    console.log('[crearOrden] response:', ordenRaw);
 
     await updateSignalStatus(pending.id, 'ejecutado');
     await logTrade({
@@ -201,7 +202,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       `*${pending.simbolo}* — ${pending.dir.toUpperCase()}\n` +
       `📦 Cantidad: ${cantidadFinal}\n` +
       `💵 Precio límite: $${precioLimite}${precioLive ? ` (cotización live: $${precioLive})` : ''}\n` +
-      `🔑 Orden #${ordenNum ?? 'N/A'}\n\n` +
+      `🔑 Orden #${ordenNum ?? 'N/A'}\n` +
+      `📋 IOL resp: \`${ordenRaw}\`\n\n` +
       `⏳ Verificando en 15 segundos...`
     );
 
