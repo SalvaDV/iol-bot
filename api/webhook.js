@@ -292,8 +292,6 @@ export default async function handler(req, res) {
   const msg = body?.message;
   if (!msg?.text) return res.status(200).end('ok');
 
-  console.log('CHATID=' + msg.chat?.id + ' FROM=' + msg.from?.id);
-
   const text = parseCommand(msg.text);
 
   const siMatch = text.match(/^si\s+([123])$/);
