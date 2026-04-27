@@ -117,10 +117,37 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       precioLimite = precioLive ? Math.ceil(precioLive * 1.01) : pending.precio;
       const pct = getPct(pending);
       const cuenta = await getCuenta(token);
-      const efectivoActual = cuenta.cuentas?.[0]?.disponible ?? 0;
-      cantidadFinal = precioLimite > 0 ? Math.floor(efectivoActual * pct / precioLimite) : 0;
+
+      // IOL puede devolver el saldo en distintos campos/niveles; probamos varios
+      const c0 = cuenta.cuentas?.[0];
+      const c1 = cuenta.cuentas?.[1];
+      // Buscar la cuenta en pesos (la que tiene mayor disponible, o la de moneda peso)
+      const cuentaPesos = [c0, c1].find(c => c?.moneda?.toLowerCase?.().includes('peso')) ??
+                          [c0, c1].sort((a, b) => (b?.disponible ?? 0) - (a?.disponible ?? 0))[0];
+      const efectivoLive =
+        cuentaPesos?.disponible ??
+        cuentaPesos?.saldo ??
+        cuenta.disponible ??
+        cuenta.saldo ??
+        0;
+
+      // Fallback al efectivo guardado en la señal si el live vino 0 (probable fallo de campo)
+      const efectivoActual = efectivoLive > 0 ? efectivoLive : (pending.ef_pre ?? 0);
+      const fuenteEfectivo = efectivoLive > 0 ? 'live' : 'guardado al analizar';
+
+      if (precioLimite <= 0) {
+        await sendMessage(`⚠️ No pude obtener precio de ${pending.simbolo} para calcular la orden.\nPrecio guardado: $${pending.precio} | Precio live: ${precioLive ?? 'no disponible'}`);
+        await updateSignalStatus(pending.id, 'cancelado');
+        return;
+      }
+
+      cantidadFinal = Math.floor(efectivoActual * pct / precioLimite);
       if (!cantidadFinal || cantidadFinal < 1) {
-        await sendMessage(`⚠️ Efectivo insuficiente para comprar ${pending.simbolo}.\nEfectivo: $${efectivoActual.toLocaleString('es-AR')} | Precio: $${precioLimite}`);
+        await sendMessage(
+          `⚠️ Efectivo insuficiente para comprar ${pending.simbolo}.\n` +
+          `Efectivo (${fuenteEfectivo}): $${efectivoActual.toLocaleString('es-AR')} | Precio límite: $${precioLimite} | %: ${(pct * 100).toFixed(0)}%\n` +
+          `Necesitás al menos $${precioLimite.toLocaleString('es-AR')} disponible.`
+        );
         await updateSignalStatus(pending.id, 'cancelado');
         return;
       }
