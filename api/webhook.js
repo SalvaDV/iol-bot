@@ -1,7 +1,7 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
-  getPendingSignals, updateSignalStatus, logTrade, cancelAllPending,
+  getPendingSignals, updateSignalStatus, logTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 
@@ -155,6 +155,87 @@ async function handleConfirmN(n) {
   }
 }
 
+async function handlePortafolio() {
+  try {
+    const token = await getToken();
+    const [portfolio, cuenta] = await Promise.all([getPortfolio(token), getCuenta(token)]);
+    const efectivo = cuenta.cuentas?.[0]?.disponible ?? 0;
+    const titulos = portfolio.titulos || [];
+
+    if (titulos.length === 0) {
+      await sendMessage(`💼 *Portafolio*\n\nSin posiciones abiertas.\n💵 Efectivo: $${efectivo.toLocaleString('es-AR')} ARS`);
+      return;
+    }
+
+    const lines = titulos.map(t => {
+      const precio = t.ultimoPrecio ?? t.precioActual ?? 0;
+      const ppc = t.ppc ?? t.precioPromedio ?? t.costoPromedio ?? null;
+      const total = t.cantidad && precio ? (t.cantidad * precio) : 0;
+      const variacion = t.variacionDiaria != null ? `${t.variacionDiaria >= 0 ? '+' : ''}${t.variacionDiaria.toFixed(2)}%` : '?';
+
+      let pnlStr = '';
+      if (ppc && ppc > 0 && precio) {
+        const pnlPct = (precio - ppc) / ppc * 100;
+        const pnlMonto = (precio - ppc) * (t.cantidad || 0);
+        pnlStr = ` | PnL: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}% ($${pnlMonto.toLocaleString('es-AR')})`;
+      }
+
+      return `• *${t.simbolo}*: ${t.cantidad} u. @ $${precio} (${variacion} hoy)${pnlStr}\n  Total: $${total.toLocaleString('es-AR')} ARS`;
+    }).join('\n');
+
+    const totalPortafolio = titulos.reduce((sum, t) => {
+      const precio = t.ultimoPrecio ?? t.precioActual ?? 0;
+      return sum + (t.cantidad && precio ? t.cantidad * precio : 0);
+    }, 0);
+
+    await sendMessage(
+      `💼 *Portafolio*\n\n${lines}\n\n` +
+      `💵 Efectivo: $${efectivo.toLocaleString('es-AR')} ARS\n` +
+      `📊 Total invertido: $${totalPortafolio.toLocaleString('es-AR')} ARS\n` +
+      `🏦 Patrimonio total: $${(efectivo + totalPortafolio).toLocaleString('es-AR')} ARS`
+    );
+  } catch (err) {
+    await sendMessage(`❌ Error: ${err.message}`).catch(() => {});
+  }
+}
+
+async function handleHistorial() {
+  try {
+    const trades = await getRecentTrades(10);
+    if (trades.length === 0) {
+      await sendMessage('📋 *Historial*\n\nSin operaciones registradas aún.');
+      return;
+    }
+    const lines = trades.map(t => {
+      const emoji = t.accion === 'compra' ? '📈' : t.accion === 'venta' ? '📉' : '💵';
+      return `${emoji} *${t.simbolo}* — ${t.accion?.toUpperCase()} ${t.cantidad ?? ''} u. @ $${t.precio} | $${t.monto?.toLocaleString('es-AR')} | ${t.fecha}`;
+    }).join('\n');
+    await sendMessage(`📋 *Últimas operaciones*\n\n${lines}`);
+  } catch (err) {
+    await sendMessage(`❌ Error: ${err.message}`).catch(() => {});
+  }
+}
+
+async function handlePrecio(simbolo) {
+  try {
+    const token = await getToken();
+    const cot = await getCotizacion(token, simbolo.toUpperCase());
+    const precio = cot.ultimoPrecio ?? cot.ultimo ?? cot.precioActual ?? cot.precio ?? '?';
+    const apertura = cot.apertura ?? null;
+    const variacion = cot.variacion ?? cot.variacionDiaria ?? null;
+    const volumen = cot.cantidadOperaciones ?? cot.volumen ?? null;
+
+    let msg = `📌 *${simbolo.toUpperCase()}*\n💵 Precio: $${precio}`;
+    if (variacion != null) msg += `\n📊 Variación: ${variacion >= 0 ? '+' : ''}${variacion.toFixed ? variacion.toFixed(2) : variacion}%`;
+    if (apertura) msg += `\n🔓 Apertura: $${apertura}`;
+    if (volumen) msg += `\n📦 Volumen: ${volumen.toLocaleString('es-AR')}`;
+
+    await sendMessage(msg);
+  } catch (err) {
+    await sendMessage(`❌ No encontré cotización para *${simbolo.toUpperCase()}*`).catch(() => {});
+  }
+}
+
 async function handleCancelAll() {
   try {
     await cancelAllPending();
@@ -183,6 +264,7 @@ export default async function handler(req, res) {
   const text = msg.text.trim().toLowerCase();
 
   const siMatch = text.match(/^si\s+([123])$/);
+  const precioMatch = text.match(/^precio\s+(\w+)$/);
 
   if (text === 'analizar') {
     await handleAnalisis();
@@ -192,6 +274,23 @@ export default async function handler(req, res) {
     await sendMessage('¿A cuál propuesta? Respondé *si 1*, *si 2* o *si 3*.\nO mandá *estado* para ver las opciones pendientes.');
   } else if (text === 'no') {
     await handleCancelAll();
+  } else if (text === 'portafolio') {
+    await handlePortafolio();
+  } else if (text === 'historial') {
+    await handleHistorial();
+  } else if (precioMatch) {
+    await handlePrecio(precioMatch[1]);
+  } else if (text === 'ayuda' || text === 'help') {
+    await sendMessage(
+      `🤖 *Comandos disponibles*\n\n` +
+      `*analizar* — análisis completo del mercado\n` +
+      `*portafolio* — posiciones actuales con P&L\n` +
+      `*historial* — últimas operaciones\n` +
+      `*precio TICKER* — cotización de un instrumento\n` +
+      `*estado* — propuestas pendientes\n` +
+      `*si 1/2/3* — ejecutar propuesta N\n` +
+      `*no* — cancelar todas las propuestas`
+    );
   } else if (text === 'estado') {
     try {
       const signals = await getPendingSignals();
