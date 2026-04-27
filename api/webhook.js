@@ -1,4 +1,4 @@
-import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden } from '../lib/iol.js';
+import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, cancelAllPending, getRecentTrades,
@@ -94,7 +94,7 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     let precioLive = null;
     try {
       const cot = await getCotizacion(token, pending.simbolo);
-      precioLive = cot.ultimoPrecio || cot.ultimo || cot.precioActual || cot.precio || null;
+      precioLive = extractPrecio(cot);
     } catch { /* usar precio guardado como fallback */ }
 
     let cantidadFinal, precioLimite;
@@ -266,7 +266,7 @@ async function handlePrecio(simbolo) {
   try {
     const token = await getToken();
     const cot = await getCotizacion(token, simbolo.toUpperCase());
-    const precio = cot.ultimoPrecio ?? cot.ultimo ?? cot.precioActual ?? cot.precio ?? '?';
+    const precio = extractPrecio(cot) ?? '?';
     const apertura = cot.apertura ?? null;
     const variacion = cot.variacion ?? cot.variacionDiaria ?? null;
     const volumen = cot.cantidadOperaciones ?? cot.volumen ?? null;
