@@ -279,7 +279,14 @@ export default async function handler(req, res) {
   } else if (text === 'historial') {
     await handleHistorial();
   } else if (precioMatch) {
-    await handlePrecio(precioMatch[1]);
+    const ticker = precioMatch[1].toLowerCase();
+    if (ticker === 'dolar' || ticker === 'usd' || ticker === 'dollar') {
+      const { getDolarData, formatDolarContext } = await import('../lib/dolar.js');
+      const d = await getDolarData();
+      await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
+    } else {
+      await handlePrecio(precioMatch[1]);
+    }
   } else if (text === 'ayuda' || text === 'help') {
     await sendMessage(
       `🤖 *Comandos disponibles*\n\n` +
