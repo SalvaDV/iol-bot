@@ -278,8 +278,14 @@ export default async function handler(req, res) {
     return res.status(200).end('ok');
   }
 
-  const msg = body?.message;
+    const msg = body?.message;
   if (!msg?.text) return res.status(200).end('ok');
+
+  const allowedUsers = process.env.TG_ALLOWED_USERS?.split(',').map(id => parseInt(id.trim())).filter(Boolean) ?? [];
+  if (allowedUsers.length > 0 && !allowedUsers.includes(msg.from?.id)) {
+    return res.status(200).end('ok');
+  }
+
   const text = msg.text.trim().toLowerCase();
 
   const siMatch = text.match(/^si\s+([123])$/);
