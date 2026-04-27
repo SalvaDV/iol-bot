@@ -92,10 +92,21 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
 
     // Precio en tiempo real
     let precioLive = null;
+    let precioError = null;
     try {
       const cot = await getCotizacion(token, pending.simbolo);
       precioLive = extractPrecio(cot);
-    } catch { /* usar precio guardado como fallback */ }
+      if (!precioLive) precioError = `campos: ${Object.keys(cot).join(',')} valores: ${JSON.stringify(cot).slice(0, 200)}`;
+    } catch (e) {
+      precioError = e.message;
+      // Intentar con ticker alternativo (ej: NVDA → NVDAD para CEDEARs en USD)
+      try {
+        const symAlt = pending.simbolo.endsWith('D') ? pending.simbolo.slice(0, -1) : pending.simbolo + 'D';
+        const cot2 = await getCotizacion(token, symAlt);
+        precioLive = extractPrecio(cot2);
+        if (precioLive) precioError = null;
+      } catch { /* ignorar */ }
+    }
 
     let cantidadFinal, precioLimite;
 
@@ -136,7 +147,11 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       const fuenteEfectivo = efectivoLive > 0 ? 'live' : 'guardado al analizar';
 
       if (precioLimite <= 0) {
-        await sendMessage(`⚠️ No pude obtener precio de ${pending.simbolo} para calcular la orden.\nPrecio guardado: $${pending.precio} | Precio live: ${precioLive ?? 'no disponible'}`);
+        await sendMessage(
+          `⚠️ No pude obtener precio de ${pending.simbolo} para calcular la orden.\n` +
+          `Precio guardado: $${pending.precio} | Precio live: ${precioLive ?? 'no disponible'}\n` +
+          `${precioError ? `Error IOL: ${precioError}` : ''}`
+        );
         await updateSignalStatus(pending.id, 'cancelado');
         return;
       }
