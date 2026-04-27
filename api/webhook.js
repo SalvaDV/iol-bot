@@ -45,7 +45,7 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
           `⚠️ *Noticia material detectada antes de ejecutar*\n\n` +
           `*${pending.simbolo}* (${pending.dir.toUpperCase()})\n\n` +
           `${check.resumen}\n\n` +
-          `🤔 ¿Querés ejecutar igual? Respondé *forzar ${n}* para proceder, o *no* para cancelar.`
+          `🤔 ¿Querés ejecutar igual? Respondé */forzar ${n}* para proceder, o */no* para cancelar.`
         );
         return;
       }
@@ -264,6 +264,17 @@ async function handleCancelAll() {
   }
 }
 
+// Normalize command: strip leading slash, strip @botname suffix, lowercase
+function parseCommand(raw) {
+  return raw.trim().toLowerCase().replace(/^\//, '').replace(/@\w+$/, '').trim();
+}
+
+function isAuthorized(msg) {
+  const ownerId = process.env.TG_OWNER_ID;
+  if (!ownerId) return true; // no restriction configured
+  return String(msg.from?.id) === String(ownerId);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).end('ok');
 
@@ -280,67 +291,77 @@ export default async function handler(req, res) {
 
   const msg = body?.message;
   if (!msg?.text) return res.status(200).end('ok');
-  const text = msg.text.trim().toLowerCase();
+
+  // In groups bots only see messages starting with / (privacy mode default)
+  // We support both /command and plain text for private fallback
+  const text = parseCommand(msg.text);
 
   const siMatch = text.match(/^si\s+([123])$/);
   const forzarMatch = text.match(/^forzar\s+([123])$/);
   const precioMatch = text.match(/^precio\s+(\w+)$/);
 
-  if (text === 'analizar') {
-    await handleAnalisis();
-  } else if (siMatch) {
-    await handleConfirmN(parseInt(siMatch[1]));
-  } else if (forzarMatch) {
-    await handleConfirmN(parseInt(forzarMatch[1]), { skipCheck: true });
-  } else if (text === 'si' || text === 'sí') {
-    await sendMessage('¿A cuál propuesta? Respondé *si 1*, *si 2* o *si 3*.\nO mandá *estado* para ver las opciones pendientes.');
-  } else if (text === 'no') {
-    await handleCancelAll();
-  } else if (text === 'portafolio') {
-    await handlePortafolio();
-  } else if (text === 'historial') {
-    await handleHistorial();
+  // Read-only commands: anyone in the group can use
+  if (text === 'precio dolar' || text === 'precio usd' || text === 'precio dollar') {
+    const { getDolarData, formatDolarContext } = await import('../lib/dolar.js');
+    const d = await getDolarData();
+    await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
+  } else if (precioMatch && ['dolar','usd','dollar'].includes(precioMatch[1])) {
+    const { getDolarData, formatDolarContext } = await import('../lib/dolar.js');
+    const d = await getDolarData();
+    await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
   } else if (precioMatch) {
-    const ticker = precioMatch[1].toLowerCase();
-    if (ticker === 'dolar' || ticker === 'usd' || ticker === 'dollar') {
-      const { getDolarData, formatDolarContext } = await import('../lib/dolar.js');
-      const d = await getDolarData();
-      await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
-    } else {
-      await handlePrecio(precioMatch[1]);
-    }
-  } else if (text === 'ayuda' || text === 'help') {
+    await handlePrecio(precioMatch[1]);
+  } else if (text === 'ayuda' || text === 'help' || text === 'start') {
     await sendMessage(
       `🤖 *Comandos disponibles*\n\n` +
-      `*analizar* — análisis completo del mercado\n` +
-      `*portafolio* — posiciones actuales con P&L\n` +
-      `*historial* — últimas operaciones\n` +
-      `*precio TICKER* — cotización de un instrumento\n` +
-      `*estado* — propuestas pendientes\n` +
-      `*si 1/2/3* — ejecutar propuesta N (con check de noticias)\n` +
-      `*forzar 1/2/3* — ejecutar saltando el check de noticias\n` +
-      `*no* — cancelar todas las propuestas`
+      `*/analizar* — análisis completo del mercado\n` +
+      `*/portafolio* — posiciones actuales con P&L\n` +
+      `*/historial* — últimas operaciones\n` +
+      `*/precio TICKER* — cotización de un instrumento\n` +
+      `*/estado* — propuestas pendientes\n` +
+      `*/si 1/2/3* — ejecutar propuesta N (con check de noticias)\n` +
+      `*/forzar 1/2/3* — ejecutar saltando el check de noticias\n` +
+      `*/no* — cancelar todas las propuestas`
     );
-  } else if (text === 'estado') {
-    try {
-      const signals = await getPendingSignals();
-      if (signals.length === 0) {
-        await sendMessage('📋 Sin propuestas pendientes.');
-      } else {
-        const lines = signals.map(s => {
-          const num = s.signals?.[0]?.replace('propuesta:', '') ?? '?';
-          const pctSig = s.signals?.find(x => x?.startsWith('pct:'));
-          const pct = pctSig ? `${(parseFloat(pctSig.replace('pct:', '')) * 100).toFixed(0)}%` : '';
-          let detalle;
-          if (s.dir === 'dolar') detalle = `💵 DOLARIZAR ${pct}`;
-          else if (s.dir === 'venta') detalle = '📉 VENTA posición completa';
-          else detalle = `📈 COMPRA ${s.cantidad ? `${s.cantidad} u. @ $${s.precio}` : `${pct} efectivo`}`;
-          return `${num}. *${s.simbolo}* — ${detalle}`;
-        }).join('\n');
-        await sendMessage(`📋 *Propuestas pendientes:*\n\n${lines}\n\nRespondé *si 1/2/3* o *no*`);
+  } else {
+    // Sensitive commands: owner only
+    if (!isAuthorized(msg)) return res.status(200).end('ok');
+
+    if (text === 'analizar') {
+      await handleAnalisis();
+    } else if (siMatch) {
+      await handleConfirmN(parseInt(siMatch[1]));
+    } else if (forzarMatch) {
+      await handleConfirmN(parseInt(forzarMatch[1]), { skipCheck: true });
+    } else if (text === 'si' || text === 'sí') {
+      await sendMessage('¿A cuál propuesta? Respondé */si 1*, */si 2* o */si 3*.\nO mandá */estado* para ver las opciones pendientes.');
+    } else if (text === 'no') {
+      await handleCancelAll();
+    } else if (text === 'portafolio') {
+      await handlePortafolio();
+    } else if (text === 'historial') {
+      await handleHistorial();
+    } else if (text === 'estado') {
+      try {
+        const signals = await getPendingSignals();
+        if (signals.length === 0) {
+          await sendMessage('📋 Sin propuestas pendientes.');
+        } else {
+          const lines = signals.map(s => {
+            const num = s.signals?.[0]?.replace('propuesta:', '') ?? '?';
+            const pctSig = s.signals?.find(x => x?.startsWith('pct:'));
+            const pct = pctSig ? `${(parseFloat(pctSig.replace('pct:', '')) * 100).toFixed(0)}%` : '';
+            let detalle;
+            if (s.dir === 'dolar') detalle = `💵 DOLARIZAR ${pct}`;
+            else if (s.dir === 'venta') detalle = '📉 VENTA posición completa';
+            else detalle = `📈 COMPRA ${s.cantidad ? `${s.cantidad} u. @ $${s.precio}` : `${pct} efectivo`}`;
+            return `${num}. *${s.simbolo}* — ${detalle}`;
+          }).join('\n');
+          await sendMessage(`📋 *Propuestas pendientes:*\n\n${lines}\n\nRespondé */si 1/2/3* o */no*`);
+        }
+      } catch (err) {
+        await sendMessage(`❌ Error: ${err.message}`).catch(() => {});
       }
-    } catch (err) {
-      await sendMessage(`❌ Error: ${err.message}`).catch(() => {});
     }
   }
 
