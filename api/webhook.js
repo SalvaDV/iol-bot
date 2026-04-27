@@ -270,9 +270,9 @@ function parseCommand(raw) {
 }
 
 function isAuthorized(msg) {
-  const ownerId = process.env.TG_OWNER_ID;
-  if (!ownerId) return true; // no restriction configured
-  return String(msg.from?.id) === String(ownerId);
+  const allowed = process.env.TG_ALLOWED_USERS?.split(',').map(id => id.trim()).filter(Boolean) ?? [];
+  if (allowed.length === 0) return true;
+  return allowed.includes(String(msg.from?.id));
 }
 
 export default async function handler(req, res) {
@@ -292,8 +292,6 @@ export default async function handler(req, res) {
   const msg = body?.message;
   if (!msg?.text) return res.status(200).end('ok');
 
-  // In groups bots only see messages starting with / (privacy mode default)
-  // We support both /command and plain text for private fallback
   const text = parseCommand(msg.text);
 
   const siMatch = text.match(/^si\s+([123])$/);
