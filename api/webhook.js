@@ -4,6 +4,7 @@ import {
   getPendingSignals, updateSignalStatus, logTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
+import { preTradeCheck } from '../lib/preTradeCheck.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -21,7 +22,7 @@ function getPct(pending) {
   return sig ? parseFloat(sig.replace('pct:', '')) : 0.15;
 }
 
-async function handleConfirmN(n) {
+async function handleConfirmN(n, { skipCheck = false } = {}) {
   try {
     const signals = await getPendingSignals();
     if (signals.length === 0) {
@@ -33,6 +34,24 @@ async function handleConfirmN(n) {
     if (!pending) {
       await sendMessage(`⚠️ No existe propuesta ${n}. Tenés ${signals.length} propuesta(s) disponible(s).`);
       return;
+    }
+
+    // Pre-trade check: solo para compra/venta de acciones (no para dolar)
+    if (!skipCheck && pending.dir !== 'dolar') {
+      await sendMessage(`🔎 *Verificando noticias recientes de ${pending.simbolo}...*`);
+      const check = await preTradeCheck(pending.simbolo, pending.dir);
+      if (check.material && check.recomendacion === 'pausar') {
+        await sendMessage(
+          `⚠️ *Noticia material detectada antes de ejecutar*\n\n` +
+          `*${pending.simbolo}* (${pending.dir.toUpperCase()})\n\n` +
+          `${check.resumen}\n\n` +
+          `🤔 ¿Querés ejecutar igual? Respondé *forzar ${n}* para proceder, o *no* para cancelar.`
+        );
+        return;
+      }
+      if (check.material) {
+        await sendMessage(`ℹ️ Contexto: ${check.resumen}\n\nProcediendo con la operación...`);
+      }
     }
 
     await updateSignalStatus(pending.id, 'procesando');
@@ -264,12 +283,15 @@ export default async function handler(req, res) {
   const text = msg.text.trim().toLowerCase();
 
   const siMatch = text.match(/^si\s+([123])$/);
+  const forzarMatch = text.match(/^forzar\s+([123])$/);
   const precioMatch = text.match(/^precio\s+(\w+)$/);
 
   if (text === 'analizar') {
     await handleAnalisis();
   } else if (siMatch) {
     await handleConfirmN(parseInt(siMatch[1]));
+  } else if (forzarMatch) {
+    await handleConfirmN(parseInt(forzarMatch[1]), { skipCheck: true });
   } else if (text === 'si' || text === 'sí') {
     await sendMessage('¿A cuál propuesta? Respondé *si 1*, *si 2* o *si 3*.\nO mandá *estado* para ver las opciones pendientes.');
   } else if (text === 'no') {
@@ -295,7 +317,8 @@ export default async function handler(req, res) {
       `*historial* — últimas operaciones\n` +
       `*precio TICKER* — cotización de un instrumento\n` +
       `*estado* — propuestas pendientes\n` +
-      `*si 1/2/3* — ejecutar propuesta N\n` +
+      `*si 1/2/3* — ejecutar propuesta N (con check de noticias)\n` +
+      `*forzar 1/2/3* — ejecutar saltando el check de noticias\n` +
       `*no* — cancelar todas las propuestas`
     );
   } else if (text === 'estado') {
