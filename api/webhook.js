@@ -27,6 +27,19 @@ function getMercado(pending) {
   return sig ? sig.replace('mercado:', '') : 'bcba';
 }
 
+function getMercadoStatus() {
+  const now = new Date();
+  const ar = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
+  const day = ar.getDay(); // 0=dom, 6=sab
+  const h = ar.getHours();
+  const m = ar.getMinutes();
+  const minutos = h * 60 + m;
+  if (day === 0 || day === 6) return { abierto: false, motivo: 'fin de semana' };
+  if (minutos < 11 * 60) return { abierto: false, motivo: `abre a las 11:00 ART (faltan ${11 * 60 - minutos} min)` };
+  if (minutos >= 17 * 60) return { abierto: false, motivo: `cerró a las 17:00 ART (reabre mañana 11:00)` };
+  return { abierto: true };
+}
+
 async function handleConfirmN(n, { skipCheck = false } = {}) {
   try {
     const signals = await getPendingSignals();
@@ -39,6 +52,19 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     if (!pending) {
       await sendMessage(`⚠️ No existe propuesta ${n}. Tenés ${signals.length} propuesta(s) disponible(s).`);
       return;
+    }
+
+    // Verificar horario de mercado (solo compra/venta, no dólar)
+    if (!skipCheck && pending.dir !== 'dolar') {
+      const mercadoStatus = getMercadoStatus();
+      if (!mercadoStatus.abierto) {
+        await sendMessage(
+          `🔴 *Mercado cerrado* — ${mercadoStatus.motivo}\n\n` +
+          `Las órdenes enviadas ahora vencen sin ejecutarse.\n` +
+          `Usá */forzar ${n}* si de todas formas querés enviarla (quedará como orden para la próxima apertura si IOL lo permite).`
+        );
+        return;
+      }
     }
 
     // Pre-trade check: solo para compra/venta de acciones (no para dolar)
