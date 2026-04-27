@@ -296,7 +296,17 @@ async function handlePrecio(simbolo) {
 
     await sendMessage(msg);
   } catch (err) {
-    await sendMessage(`❌ No encontré cotización para *${simbolo.toUpperCase()}*`).catch(() => {});
+    await sendMessage(`❌ No encontré cotización para *${simbolo.toUpperCase()}*\n\`${err.message}\``).catch(() => {});
+  }
+}
+
+async function handleDebugCot(simbolo) {
+  try {
+    const token = await getToken();
+    const cot = await getCotizacion(token, simbolo.toUpperCase());
+    await sendMessage(`🔬 *Raw IOL response para ${simbolo.toUpperCase()}*\n\`\`\`\n${JSON.stringify(cot, null, 2).slice(0, 800)}\n\`\`\``);
+  } catch (err) {
+    await sendMessage(`❌ Error: \`${err.message}\``);
   }
 }
 
@@ -342,6 +352,7 @@ export default async function handler(req, res) {
   const siMatch = text.match(/^si\s+([123])$/);
   const forzarMatch = text.match(/^forzar\s+([123])$/);
   const precioMatch = text.match(/^precio\s+(\w+)$/);
+  const debugMatch = text.match(/^debug\s+(\w+)$/);
 
   // Read-only commands: anyone in the group can use
   if (text === 'precio dolar' || text === 'precio usd' || text === 'precio dollar') {
@@ -354,6 +365,8 @@ export default async function handler(req, res) {
     await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
   } else if (precioMatch) {
     await handlePrecio(precioMatch[1]);
+  } else if (debugMatch) {
+    await handleDebugCot(debugMatch[1]);
   } else if (text === 'ayuda' || text === 'help' || text === 'start') {
     await sendMessage(
       `🤖 *Comandos disponibles*\n\n` +
