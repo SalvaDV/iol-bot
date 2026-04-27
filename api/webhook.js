@@ -286,7 +286,8 @@ export default async function handler(req, res) {
     return res.status(200).end('ok');
   }
 
-  const text = msg.text.trim().toLowerCase();
+    // Strip leading slash and @botname suffix (e.g. /analizar@MyBot → analizar)
+  const text = msg.text.trim().toLowerCase().replace(/^\//, '').split('@')[0].trim();
 
   const siMatch = text.match(/^si\s+([123])$/);
   const forzarMatch = text.match(/^forzar\s+([123])$/);
