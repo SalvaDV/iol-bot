@@ -178,7 +178,11 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       operacion: pending.dir,
     });
 
-    const ordenNum = orden.numero || orden.id || null;
+    // Buscar el número de orden en todos los campos posibles
+    const ordenNum = orden.numero ?? orden.id ?? orden.nroOperacion ?? orden.numeroOperacion ??
+                     orden.nro ?? orden.orderNumber ?? orden.numeroPedido ?? null;
+    console.log('[crearOrden] response keys:', Object.keys(orden).join(','), 'full:', JSON.stringify(orden).slice(0, 300));
+
     await updateSignalStatus(pending.id, 'ejecutado');
     await logTrade({
       fecha: new Date().toISOString().slice(0, 10),
@@ -202,8 +206,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     );
 
     // Verificación post-orden
+    await new Promise(r => setTimeout(r, 15000));
     if (ordenNum) {
-      await new Promise(r => setTimeout(r, 15000));
       try {
         const estadoOrden = await getOrden(token, ordenNum);
         const estado = estadoOrden.estado || estadoOrden.status || estadoOrden.estadoOrden || 'desconocido';
@@ -213,6 +217,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       } catch {
         await sendMessage(`📊 *Orden #${ordenNum}* enviada. Verificá el estado en IOL.`);
       }
+    } else {
+      await sendMessage(`📊 Orden enviada a IOL. Verificá el estado en la app (número no disponible en la respuesta).`);
     }
   } catch (err) {
     await sendMessage(`❌ Error ejecutando propuesta ${n}: ${err.message}`).catch(() => {});
