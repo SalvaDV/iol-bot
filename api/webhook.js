@@ -186,13 +186,21 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
 
       cantidadFinal = Math.floor(efectivoActual * pct / precioLimite);
       if (!cantidadFinal || cantidadFinal < 1) {
-        await sendMessage(
-          `⚠️ Efectivo insuficiente para comprar ${pending.simbolo}.\n` +
-          `Efectivo (${fuenteEfectivo}): $${efectivoActual.toLocaleString('es-AR')} | Precio límite: $${precioLimite} | %: ${(pct * 100).toFixed(0)}%\n` +
-          `Necesitás al menos $${precioLimite.toLocaleString('es-AR')} disponible.`
-        );
-        await updateSignalStatus(pending.id, 'cancelado');
-        return;
+        // Si no alcanza el porcentaje pero sí hay plata para 1 unidad, comprar 1
+        if (efectivoActual >= precioLimite) {
+          cantidadFinal = 1;
+          await sendMessage(
+            `ℹ️ ${pending.simbolo} cuesta $${precioLimite.toLocaleString('es-AR')} por unidad — supera el ${(pct * 100).toFixed(0)}% asignado ($${Math.round(efectivoActual * pct).toLocaleString('es-AR')} ARS).\n` +
+            `Comprando *1 unidad* (${(precioLimite / efectivoActual * 100).toFixed(0)}% del efectivo).`
+          );
+        } else {
+          await sendMessage(
+            `⚠️ Efectivo insuficiente para comprar ${pending.simbolo}.\n` +
+            `Efectivo: $${efectivoActual.toLocaleString('es-AR')} | Precio: $${precioLimite.toLocaleString('es-AR')} | Necesitás al menos $${precioLimite.toLocaleString('es-AR')}.`
+          );
+          await updateSignalStatus(pending.id, 'cancelado');
+          return;
+        }
       }
     }
 
