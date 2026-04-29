@@ -1,4 +1,4 @@
-import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio } from '../lib/iol.js';
+import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, cancelAllPending, getRecentTrades,
@@ -149,11 +149,11 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
         await updateSignalStatus(pending.id, 'cancelado');
         return;
       }
-      // Precio límite venta: 1% por debajo del live (o precio guardado)
-      precioLimite = precioLive ? Math.floor(precioLive * 0.99) : pending.precio;
+      // Precio límite venta: 1% por debajo del live (o precio guardado), redondeado al tick BYMA
+      precioLimite = precioLive ? roundToTick(precioLive * 0.99, 'venta') : roundToTick(pending.precio, 'venta');
     } else {
-      // Precio límite compra: 1% por encima del live (o precio guardado)
-      precioLimite = precioLive ? Math.ceil(precioLive * 1.01) : pending.precio;
+      // Precio límite compra: 1% por encima del live (o precio guardado), redondeado al tick BYMA
+      precioLimite = precioLive ? roundToTick(precioLive * 1.01, 'compra') : roundToTick(pending.precio, 'compra');
       const pct = getPct(pending);
       const cuenta = await getCuenta(token);
 
