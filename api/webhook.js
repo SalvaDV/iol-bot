@@ -124,42 +124,45 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       return;
     }
 
-    // Caso crypto — operación manual en exchange del usuario
-    if (pending.dir === 'crypto') {
+    // Caso crypto compra o venta — operación manual en exchange del usuario
+    if (pending.dir === 'crypto' || pending.dir === 'crypto_venta') {
+      const esVenta = pending.dir === 'crypto_venta';
       const pct = getPct(pending);
-      const montoARS = pending.ef_pre ? Math.round(pending.ef_pre * pct) : null;
-      await sendMessage(
-        `🪙 *Recomendación: Comprar ${pending.simbolo}*\n\n` +
-        `El análisis sugiere destinar ~*${(pct * 100).toFixed(0)}%* del efectivo a esta crypto.` +
-        (montoARS ? ` (≈$${montoARS.toLocaleString('es-AR')} ARS)` : '') + `\n\n` +
-        `*Ejecutá manualmente en tu exchange* (Binance, Lemon, Ripio, etc.):\n` +
-        `• Par sugerido: *${pending.simbolo}/USDT* o *${pending.simbolo}/ARS*\n` +
-        `• Convertí ARS a USD primero si es necesario\n\n` +
-        `⚠️ Alto riesgo — crypto puede moverse ±20% en horas.`
-      );
+      const montoARS = pending.ef_pre && pct ? Math.round(pending.ef_pre * pct) : null;
+
+      if (esVenta) {
+        await sendMessage(
+          `🪙 *Recomendación: Vender ${pending.simbolo}*\n\n` +
+          `El análisis sugiere cerrar (o reducir) tu posición en *${pending.simbolo}*.\n\n` +
+          `*Ejecutá manualmente en tu exchange* (Binance, Lemon, Ripio, etc.):\n` +
+          `• Vendé *${pending.simbolo}/USDT* o directamente por ARS\n` +
+          `• Confirmá el precio antes de ejecutar\n\n` +
+          `⚠️ Recordá considerar impuestos y comisiones del exchange.`
+        );
+      } else {
+        await sendMessage(
+          `🪙 *Recomendación: Comprar ${pending.simbolo}*\n\n` +
+          `El análisis sugiere destinar ~*${(pct * 100).toFixed(0)}%* del efectivo a esta crypto.` +
+          (montoARS ? ` (≈$${montoARS.toLocaleString('es-AR')} ARS)` : '') + `\n\n` +
+          `*Ejecutá manualmente en tu exchange* (Binance, Lemon, Ripio, etc.):\n` +
+          `• Par sugerido: *${pending.simbolo}/USDT* o *${pending.simbolo}/ARS*\n` +
+          `• Convertí ARS a USD primero si es necesario\n\n` +
+          `⚠️ Alto riesgo — crypto puede moverse ±20% en horas.`
+        );
+      }
+
       await updateSignalStatus(pending.id, 'ejecutado');
       await logTrade({
         fecha: new Date().toISOString().slice(0, 10),
         hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
         simbolo: pending.simbolo,
-        accion: 'crypto_manual',
+        accion: esVenta ? 'crypto_manual_venta' : 'crypto_manual',
         precio: 0,
         cantidad: 0,
         monto: montoARS ?? 0,
         senales: pending.signals,
         efectivo_pre: pending.ef_pre,
       }).catch(() => {});
-      return;
-    }
-
-    // Validar: venta de crypto no tiene sentido (no tenemos visibilidad de holdings externos)
-    const CRYPTO_SYMS = ['BTC','ETH','SOL','BNB','XRP','MATIC','ADA','DOGE'];
-    if (pending.dir === 'venta' && CRYPTO_SYMS.includes(pending.simbolo.toUpperCase())) {
-      await sendMessage(
-        `⚠️ El bot sugirió vender *${pending.simbolo}* pero no podemos verificar holdings de crypto.\n` +
-        `Si tenés ${pending.simbolo} en tu exchange y querés vender, hacelo manualmente.`
-      );
-      await updateSignalStatus(pending.id, 'cancelado');
       return;
     }
 
