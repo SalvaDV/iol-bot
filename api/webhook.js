@@ -152,6 +152,17 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       return;
     }
 
+    // Validar: venta de crypto no tiene sentido (no tenemos visibilidad de holdings externos)
+    const CRYPTO_SYMS = ['BTC','ETH','SOL','BNB','XRP','MATIC','ADA','DOGE'];
+    if (pending.dir === 'venta' && CRYPTO_SYMS.includes(pending.simbolo.toUpperCase())) {
+      await sendMessage(
+        `⚠️ El bot sugirió vender *${pending.simbolo}* pero no podemos verificar holdings de crypto.\n` +
+        `Si tenés ${pending.simbolo} en tu exchange y querés vender, hacelo manualmente.`
+      );
+      await updateSignalStatus(pending.id, 'cancelado');
+      return;
+    }
+
     // Precio en tiempo real
     const mercadoSignal = getMercado(pending);
     let precioLive = null;
