@@ -1,4 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
+import { isBinanceConfigured, getBinanceBalance, getBinancePrice, binanceBuy, binanceSell } from '../lib/binance.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
@@ -23,6 +24,11 @@ async function handleAnalisis() {
 function getPct(pending) {
   const sig = pending.signals?.find(s => s?.startsWith('pct:'));
   return sig ? parseFloat(sig.replace('pct:', '')) : 0.15;
+}
+
+function getPctUsdt(pending) {
+  const sig = pending.signals?.find(s => s?.startsWith('pct_usdt:'));
+  return sig ? parseFloat(sig.replace('pct_usdt:', '')) : 0.20;
 }
 
 function getMercado(pending) {
@@ -124,45 +130,93 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       return;
     }
 
-    // Caso crypto compra o venta — operación manual en exchange del usuario
+    // Caso crypto compra o venta
     if (pending.dir === 'crypto' || pending.dir === 'crypto_venta') {
       const esVenta = pending.dir === 'crypto_venta';
-      const pct = getPct(pending);
-      const montoARS = pending.ef_pre && pct ? Math.round(pending.ef_pre * pct) : null;
+      const sym = pending.simbolo.toUpperCase();
 
-      if (esVenta) {
-        await sendMessage(
-          `🪙 *Recomendación: Vender ${pending.simbolo}*\n\n` +
-          `El análisis sugiere cerrar (o reducir) tu posición en *${pending.simbolo}*.\n\n` +
-          `*Ejecutá manualmente en tu exchange* (Binance, Lemon, Ripio, etc.):\n` +
-          `• Vendé *${pending.simbolo}/USDT* o directamente por ARS\n` +
-          `• Confirmá el precio antes de ejecutar\n\n` +
-          `⚠️ Recordá considerar impuestos y comisiones del exchange.`
-        );
+      if (isBinanceConfigured()) {
+        // ── Ejecución automática via Binance ──
+        try {
+          let resultado, accion, precioUsd, cantidadReal, montoUsdt;
+
+          if (esVenta) {
+            const balance = await getBinanceBalance(sym);
+            if (!balance || balance <= 0) {
+              await sendMessage(`⚠️ No tenés *${sym}* en Binance (balance: ${balance}).`);
+              await updateSignalStatus(pending.id, 'cancelado');
+              return;
+            }
+            resultado = await binanceSell(sym, balance);
+            accion = 'crypto_binance_venta';
+            precioUsd = resultado.precioUsd;
+            cantidadReal = resultado.cantidad;
+            montoUsdt = resultado.ingresoUsdt;
+          } else {
+            const pctUsdt = getPctUsdt(pending);
+            const usdtDisp = await getBinanceBalance('USDT');
+            const usdtAmount = usdtDisp * pctUsdt;
+            if (usdtAmount < 5) {
+              await sendMessage(`⚠️ USDT insuficiente en Binance. Disponible: $${usdtDisp.toFixed(2)} USDT.`);
+              await updateSignalStatus(pending.id, 'cancelado');
+              return;
+            }
+            resultado = await binanceBuy(sym, usdtAmount);
+            accion = 'crypto_binance';
+            precioUsd = resultado.precioUsd;
+            cantidadReal = resultado.cantidad;
+            montoUsdt = resultado.costoUsdt;
+          }
+
+          await updateSignalStatus(pending.id, 'ejecutado');
+          await logTrade({
+            fecha: new Date().toISOString().slice(0, 10),
+            hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+            simbolo: sym,
+            accion,
+            precio: precioUsd ?? 0,
+            cantidad: cantidadReal ?? 0,
+            monto: Math.round((montoUsdt ?? 0) * (pending.ef_pre > 0 ? 1 : 1)), // USDT como referencia
+            senales: pending.signals,
+            efectivo_pre: pending.ef_pre,
+          }).catch(() => {});
+
+          await sendMessage(
+            `✅ *Orden Binance ejecutada*\n\n` +
+            `*${sym}* — ${esVenta ? '📉 VENTA' : '🪙 COMPRA'}\n` +
+            `📦 Cantidad: ${cantidadReal?.toFixed(6) ?? '?'} ${sym}\n` +
+            `💵 Precio: $${precioUsd?.toFixed(2) ?? '?'} USD\n` +
+            `💰 ${esVenta ? 'Ingreso' : 'Costo'}: $${montoUsdt?.toFixed(2) ?? '?'} USDT`
+          );
+        } catch (err) {
+          await sendMessage(`❌ Error en Binance: ${err.message}`).catch(() => {});
+          await updateSignalStatus(pending.id, 'cancelado');
+        }
       } else {
-        await sendMessage(
-          `🪙 *Recomendación: Comprar ${pending.simbolo}*\n\n` +
-          `El análisis sugiere destinar ~*${(pct * 100).toFixed(0)}%* del efectivo a esta crypto.` +
-          (montoARS ? ` (≈$${montoARS.toLocaleString('es-AR')} ARS)` : '') + `\n\n` +
-          `*Ejecutá manualmente en tu exchange* (Binance, Lemon, Ripio, etc.):\n` +
-          `• Par sugerido: *${pending.simbolo}/USDT* o *${pending.simbolo}/ARS*\n` +
-          `• Convertí ARS a USD primero si es necesario\n\n` +
-          `⚠️ Alto riesgo — crypto puede moverse ±20% en horas.`
-        );
+        // ── Fallback manual ──
+        const pct = getPctUsdt(pending);
+        if (esVenta) {
+          await sendMessage(
+            `🪙 *Vender ${sym}* — ejecutá manualmente en tu exchange\n` +
+            `• Par: *${sym}/USDT*\n⚠️ Considerá impuestos y comisiones.`
+          );
+        } else {
+          await sendMessage(
+            `🪙 *Comprar ${sym}* — ejecutá manualmente en Binance/Lemon/Ripio\n` +
+            `• Par: *${sym}/USDT* | ${(pct * 100).toFixed(0)}% del USDT disponible\n` +
+            `⚠️ Alto riesgo — puede moverse ±20% en horas.`
+          );
+        }
+        await updateSignalStatus(pending.id, 'ejecutado');
+        await logTrade({
+          fecha: new Date().toISOString().slice(0, 10),
+          hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+          simbolo: sym,
+          accion: esVenta ? 'crypto_manual_venta' : 'crypto_manual',
+          precio: 0, cantidad: 0, monto: 0,
+          senales: pending.signals, efectivo_pre: pending.ef_pre,
+        }).catch(() => {});
       }
-
-      await updateSignalStatus(pending.id, 'ejecutado');
-      await logTrade({
-        fecha: new Date().toISOString().slice(0, 10),
-        hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
-        simbolo: pending.simbolo,
-        accion: esVenta ? 'crypto_manual_venta' : 'crypto_manual',
-        precio: 0,
-        cantidad: 0,
-        monto: montoARS ?? 0,
-        senales: pending.signals,
-        efectivo_pre: pending.ef_pre,
-      }).catch(() => {});
       return;
     }
 
@@ -476,10 +530,10 @@ export default async function handler(req, res) {
 
   const text = parseCommand(msg.text);
 
-  const siMatch = text.match(/^si\s+([123])$/);
-  const forzarMatch = text.match(/^forzar\s+([123])$/);
+  const siMatch    = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
+  const forzarMatch = text.match(/^forzar\s+([1-5](?:\s+[1-5])*)$/);
   const precioMatch = text.match(/^precio\s+(\w+)$/);
-  const debugMatch = text.match(/^debug\s+(\w+)$/);
+  const debugMatch  = text.match(/^debug\s+(\w+)$/);
 
   // Read-only commands: anyone in the group can use
   if (text === 'precio dolar' || text === 'precio usd' || text === 'precio dollar') {
@@ -513,9 +567,11 @@ export default async function handler(req, res) {
     if (text === 'analizar') {
       await handleAnalisis();
     } else if (siMatch) {
-      await handleConfirmN(parseInt(siMatch[1]));
+      const nums = [...new Set(siMatch[1].trim().split(/\s+/).map(Number))].sort();
+      for (const n of nums) await handleConfirmN(n);
     } else if (forzarMatch) {
-      await handleConfirmN(parseInt(forzarMatch[1]), { skipCheck: true });
+      const nums = [...new Set(forzarMatch[1].trim().split(/\s+/).map(Number))].sort();
+      for (const n of nums) await handleConfirmN(n, { skipCheck: true });
     } else if (text === 'si' || text === 'sí') {
       await sendMessage('¿A cuál propuesta? Respondé */si 1*, */si 2* o */si 3*.\nO mandá */estado* para ver las opciones pendientes.');
     } else if (text === 'no') {
