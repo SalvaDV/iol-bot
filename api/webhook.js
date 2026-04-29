@@ -8,6 +8,9 @@ import { preTradeCheck } from '../lib/preTradeCheck.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
+// Comisión IOL total estimada: 0.50% + IVA 21% + derechos BYMA ~0.03% ≈ 0.635%
+const COMISION_RATE = 0.00635;
+
 async function handleAnalisis() {
   await sendMessage('🔍 *Analizando mercado...*\nConsultando noticias, técnicos y portafolio. Tardará ~40 segundos.');
   try {
@@ -221,6 +224,12 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     await updateSignalStatus(pending.id, 'ejecutado');
     // Log inicial con precio live (mejor estimación antes de confirmar ejecución)
     const precioLog = precioLive ?? precioLimite;
+    const montoLog = cantidadFinal * precioLog;
+    const comisionLog = montoLog * COMISION_RATE;
+    const efectivo_post_inicial = pending.dir === 'venta'
+      ? efectivoActual + montoLog - comisionLog
+      : efectivoActual - montoLog - comisionLog;
+
     const tradeRow = await logTrade({
       fecha: new Date().toISOString().slice(0, 10),
       hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
@@ -228,9 +237,10 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       accion: pending.dir,
       precio: precioLog,
       cantidad: cantidadFinal,
-      monto: cantidadFinal * precioLog,
+      monto: montoLog,
       senales: pending.signals,
-      efectivo_pre: pending.ef_pre,
+      efectivo_pre: efectivoActual,
+      efectivo_post: Math.round(efectivo_post_inicial),
     }).catch(() => null);
 
     await sendMessage(
@@ -260,7 +270,7 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       await sendMessage(`📊 Orden enviada a IOL. Verificá el estado en la app.`);
     }
 
-    // Actualizar el log con el precio real desde el portafolio de IOL
+    // Actualizar el log con precio real (ppc de IOL) y efectivo_post recalculado
     if (tradeRow?.id) {
       try {
         const portfolioPost = await getPortfolio(token);
@@ -268,16 +278,21 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
           t => t.simbolo?.toUpperCase() === pending.simbolo.toUpperCase()
         );
         if (pos) {
-          // ppc = precio promedio de compra real en IOL
           const precioReal = pos.ppc ?? pos.precioPromedio ?? pos.costoPromedio ?? null;
           const cantidadReal = pos.cantidad ?? cantidadFinal;
           if (precioReal && precioReal > 0) {
+            const montoReal = cantidadReal * precioReal;
+            const comisionReal = montoReal * COMISION_RATE;
+            const efectivo_post_real = pending.dir === 'venta'
+              ? efectivoActual + montoReal - comisionReal
+              : efectivoActual - montoReal - comisionReal;
             await updateTrade(tradeRow.id, {
               precio: precioReal,
               cantidad: cantidadReal,
-              monto: cantidadReal * precioReal,
+              monto: Math.round(montoReal),
+              efectivo_post: Math.round(efectivo_post_real),
             });
-            console.log(`[logTrade] actualizado con precio real: ${precioReal} x ${cantidadReal}`);
+            console.log(`[logTrade] actualizado: precio=${precioReal} x ${cantidadReal} ef_post=${Math.round(efectivo_post_real)}`);
           }
         }
       } catch (e) {
