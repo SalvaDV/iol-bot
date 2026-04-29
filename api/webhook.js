@@ -1,5 +1,4 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
-import { isBinanceConfigured, getBinanceBalance, getBinancePrice, binanceBuy, binanceSell } from '../lib/binance.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
@@ -26,10 +25,6 @@ function getPct(pending) {
   return sig ? parseFloat(sig.replace('pct:', '')) : 0.15;
 }
 
-function getPctUsdt(pending) {
-  const sig = pending.signals?.find(s => s?.startsWith('pct_usdt:'));
-  return sig ? parseFloat(sig.replace('pct_usdt:', '')) : 0.20;
-}
 
 function getMercado(pending) {
   const sig = pending.signals?.find(s => s?.startsWith('mercado:'));
@@ -127,96 +122,6 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
         senales: pending.signals,
         efectivo_pre: pending.ef_pre,
       }).catch(() => {});
-      return;
-    }
-
-    // Caso crypto compra o venta
-    if (pending.dir === 'crypto' || pending.dir === 'crypto_venta') {
-      const esVenta = pending.dir === 'crypto_venta';
-      const sym = pending.simbolo.toUpperCase();
-
-      if (isBinanceConfigured()) {
-        // ── Ejecución automática via Binance ──
-        try {
-          let resultado, accion, precioUsd, cantidadReal, montoUsdt;
-
-          if (esVenta) {
-            const balance = await getBinanceBalance(sym);
-            if (!balance || balance <= 0) {
-              await sendMessage(`⚠️ No tenés *${sym}* en Binance (balance: ${balance}).`);
-              await updateSignalStatus(pending.id, 'cancelado');
-              return;
-            }
-            resultado = await binanceSell(sym, balance);
-            accion = 'crypto_binance_venta';
-            precioUsd = resultado.precioUsd;
-            cantidadReal = resultado.cantidad;
-            montoUsdt = resultado.ingresoUsdt;
-          } else {
-            const pctUsdt = getPctUsdt(pending);
-            const usdtDisp = await getBinanceBalance('USDT');
-            const usdtAmount = usdtDisp * pctUsdt;
-            if (usdtAmount < 5) {
-              await sendMessage(`⚠️ USDT insuficiente en Binance. Disponible: $${usdtDisp.toFixed(2)} USDT.`);
-              await updateSignalStatus(pending.id, 'cancelado');
-              return;
-            }
-            resultado = await binanceBuy(sym, usdtAmount);
-            accion = 'crypto_binance';
-            precioUsd = resultado.precioUsd;
-            cantidadReal = resultado.cantidad;
-            montoUsdt = resultado.costoUsdt;
-          }
-
-          await updateSignalStatus(pending.id, 'ejecutado');
-          await logTrade({
-            fecha: new Date().toISOString().slice(0, 10),
-            hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
-            simbolo: sym,
-            accion,
-            precio: precioUsd ?? 0,
-            cantidad: cantidadReal ?? 0,
-            monto: Math.round((montoUsdt ?? 0) * (pending.ef_pre > 0 ? 1 : 1)), // USDT como referencia
-            senales: pending.signals,
-            efectivo_pre: pending.ef_pre,
-          }).catch(() => {});
-
-          await sendMessage(
-            `✅ *Orden Binance ejecutada*\n\n` +
-            `*${sym}* — ${esVenta ? '📉 VENTA' : '🪙 COMPRA'}\n` +
-            `📦 Cantidad: ${cantidadReal?.toFixed(6) ?? '?'} ${sym}\n` +
-            `💵 Precio: $${precioUsd?.toFixed(2) ?? '?'} USD\n` +
-            `💰 ${esVenta ? 'Ingreso' : 'Costo'}: $${montoUsdt?.toFixed(2) ?? '?'} USDT`
-          );
-        } catch (err) {
-          await sendMessage(`❌ Error en Binance: ${err.message}`).catch(() => {});
-          await updateSignalStatus(pending.id, 'cancelado');
-        }
-      } else {
-        // ── Fallback manual ──
-        const pct = getPctUsdt(pending);
-        if (esVenta) {
-          await sendMessage(
-            `🪙 *Vender ${sym}* — ejecutá manualmente en tu exchange\n` +
-            `• Par: *${sym}/USDT*\n⚠️ Considerá impuestos y comisiones.`
-          );
-        } else {
-          await sendMessage(
-            `🪙 *Comprar ${sym}* — ejecutá manualmente en Binance/Lemon/Ripio\n` +
-            `• Par: *${sym}/USDT* | ${(pct * 100).toFixed(0)}% del USDT disponible\n` +
-            `⚠️ Alto riesgo — puede moverse ±20% en horas.`
-          );
-        }
-        await updateSignalStatus(pending.id, 'ejecutado');
-        await logTrade({
-          fecha: new Date().toISOString().slice(0, 10),
-          hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
-          simbolo: sym,
-          accion: esVenta ? 'crypto_manual_venta' : 'crypto_manual',
-          precio: 0, cantidad: 0, monto: 0,
-          senales: pending.signals, efectivo_pre: pending.ef_pre,
-        }).catch(() => {});
-      }
       return;
     }
 
