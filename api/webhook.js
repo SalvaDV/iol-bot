@@ -1,7 +1,7 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 import {
-  getPendingSignals, updateSignalStatus, logTrade, cancelAllPending, getRecentTrades,
+  getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -219,42 +219,70 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     console.log('[crearOrden] response:', ordenRaw);
 
     await updateSignalStatus(pending.id, 'ejecutado');
-    await logTrade({
+    // Log inicial con precio live (mejor estimación antes de confirmar ejecución)
+    const precioLog = precioLive ?? precioLimite;
+    const tradeRow = await logTrade({
       fecha: new Date().toISOString().slice(0, 10),
       hora: new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
       simbolo: pending.simbolo,
       accion: pending.dir,
-      precio: precioLimite,
+      precio: precioLog,
       cantidad: cantidadFinal,
-      monto: cantidadFinal * precioLimite,
+      monto: cantidadFinal * precioLog,
       senales: pending.signals,
       efectivo_pre: pending.ef_pre,
-    });
+    }).catch(() => null);
 
     await sendMessage(
       `✅ *Orden enviada a IOL*\n\n` +
       `*${pending.simbolo}* — ${pending.dir.toUpperCase()}\n` +
       `📦 Cantidad: ${cantidadFinal}\n` +
       `💵 Precio límite: $${precioLimite}${precioLive ? ` (cotización live: $${precioLive})` : ''}\n` +
-      `🔑 Orden #${ordenNum ?? 'N/A'}\n` +
-      `📋 IOL resp: \`${ordenRaw}\`\n\n` +
+      `🔑 Orden #${ordenNum ?? 'N/A'}\n\n` +
       `⏳ Verificando en 15 segundos...`
     );
 
-    // Verificación post-orden
+    // Verificación post-orden + actualización del log con precio real de IOL
     await new Promise(r => setTimeout(r, 15000));
+
+    let estadoFinal = null;
     if (ordenNum) {
       try {
         const estadoOrden = await getOrden(token, ordenNum);
-        const estado = estadoOrden.estado || estadoOrden.status || estadoOrden.estadoOrden || 'desconocido';
-        const emoji = estado.toLowerCase().includes('ejecut') ? '✅' :
-                      estado.toLowerCase().includes('cancel') ? '❌' : '⏳';
-        await sendMessage(`${emoji} *Orden #${ordenNum}*: ${estado}`);
+        estadoFinal = estadoOrden.estado || estadoOrden.status || estadoOrden.estadoOrden || 'desconocido';
+        const emoji = estadoFinal.toLowerCase().includes('ejecut') ? '✅' :
+                      estadoFinal.toLowerCase().includes('cancel') ? '❌' : '⏳';
+        await sendMessage(`${emoji} *Orden #${ordenNum}*: ${estadoFinal}`);
       } catch {
         await sendMessage(`📊 *Orden #${ordenNum}* enviada. Verificá el estado en IOL.`);
       }
     } else {
-      await sendMessage(`📊 Orden enviada a IOL. Verificá el estado en la app (número no disponible en la respuesta).`);
+      await sendMessage(`📊 Orden enviada a IOL. Verificá el estado en la app.`);
+    }
+
+    // Actualizar el log con el precio real desde el portafolio de IOL
+    if (tradeRow?.id) {
+      try {
+        const portfolioPost = await getPortfolio(token);
+        const pos = (portfolioPost.titulos || []).find(
+          t => t.simbolo?.toUpperCase() === pending.simbolo.toUpperCase()
+        );
+        if (pos) {
+          // ppc = precio promedio de compra real en IOL
+          const precioReal = pos.ppc ?? pos.precioPromedio ?? pos.costoPromedio ?? null;
+          const cantidadReal = pos.cantidad ?? cantidadFinal;
+          if (precioReal && precioReal > 0) {
+            await updateTrade(tradeRow.id, {
+              precio: precioReal,
+              cantidad: cantidadReal,
+              monto: cantidadReal * precioReal,
+            });
+            console.log(`[logTrade] actualizado con precio real: ${precioReal} x ${cantidadReal}`);
+          }
+        }
+      } catch (e) {
+        console.log('[logTrade] no se pudo actualizar con precio real:', e.message);
+      }
     }
   } catch (err) {
     await sendMessage(`❌ Error ejecutando propuesta ${n}: ${err.message}`).catch(() => {});
