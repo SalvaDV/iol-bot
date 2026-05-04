@@ -532,15 +532,20 @@ export default async function handler(req, res) {
     const isForceReply = replyToText.includes('Agregar instrumento');
 
     let isStatePending = false;
+    let stateDebug = 'no-check';
     if (!isForceReply && userId) {
       try {
         const state = await getUserState(userId);
+        stateDebug = state ? `action=${state.action}` : 'null';
         isStatePending = state?.action === 'awaiting_ticker';
         if (isStatePending) await clearUserState(userId).catch(() => {});
       } catch (e) {
-        console.error('[agregar] getUserState error:', e.message);
+        stateDebug = `error:${e.message}`;
+        await sendMessage(`⚠️ debug getUserState error: ${e.message}`).catch(() => {});
       }
     }
+
+    console.log(`[agregar] userId=${userId} text="${rawText}" forceReply=${isForceReply} state=${stateDebug} pending=${isStatePending}`);
 
     if (isForceReply || isStatePending) {
       await handleSearchInstrumento(rawText);
