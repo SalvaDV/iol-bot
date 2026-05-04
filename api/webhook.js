@@ -2,7 +2,7 @@ import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden,
 import { sendMessage, sendMessageWithButtons, sendForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
-  addToWatchlist,
+  getUserState, setUserState, clearUserState, addToWatchlist,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -523,15 +523,32 @@ export default async function handler(req, res) {
 
   const userId = msg.from?.id;
 
-  // Detectar respuesta al force_reply de "Agregar instrumento" (stateless)
-  // reply_to_message.text contiene el texto del mensaje al que se responde
-  const replyToText = msg.reply_to_message?.text ?? '';
-  if (replyToText.includes('Agregar instrumento') && isAuthorized(msg)) {
-    await handleSearchInstrumento(rawText);
-    return res.status(200).end('ok');
+  // ── Flujo "Agregar instrumento" ──────────────────────────────────────────────
+  // Detectar de dos formas (cualquiera que funcione en el cliente Telegram):
+  // 1. El usuario respondió al force_reply del bot (reply_to_message.text)
+  // 2. El usuario mandó un mensaje nuevo y hay estado pendiente en Supabase
+  if (isAuthorized(msg) && !mappedText) {
+    const replyToText = msg.reply_to_message?.text ?? '';
+    const isForceReply = replyToText.includes('Agregar instrumento');
+
+    let isStatePending = false;
+    if (!isForceReply && userId) {
+      try {
+        const state = await getUserState(userId);
+        isStatePending = state?.action === 'awaiting_ticker';
+        if (isStatePending) await clearUserState(userId).catch(() => {});
+      } catch (e) {
+        console.error('[agregar] getUserState error:', e.message);
+      }
+    }
+
+    if (isForceReply || isStatePending) {
+      await handleSearchInstrumento(rawText);
+      return res.status(200).end('ok');
+    }
   }
 
-  // Comando /buscar TICKER — alternativa sin force_reply
+  // Comando /buscar TICKER — alternativa explícita
   const buscarMatch = text.match(/^buscar\s+(\S+)$/);
 
   const siMatch     = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
@@ -569,8 +586,13 @@ export default async function handler(req, res) {
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
     if (text === 'agregar') {
+      // Guardar estado en Supabase (para mensajes nuevos sin reply)
+      if (userId) await setUserState(userId, 'awaiting_ticker', {}).catch(e =>
+        console.error('[agregar] setUserState error:', e.message)
+      );
+      // force_reply: en algunos clientes Telegram abre el campo de respuesta automáticamente
       await sendForceReply(
-        'Agregar instrumento a tu watchlist\n\nEscribí el ticker y envialo como respuesta a este mensaje:\nEjemplos: CRM, NVDA, AL35, AAPL'
+        'Agregar instrumento a tu watchlist\n\nEscribí el ticker y envialo:\nEjemplos: CRM, NVDA, AL35, AAPL'
       );
     } else if (text === 'analizar') {
       await handleAnalisis();
