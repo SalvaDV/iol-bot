@@ -1,5 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
-import { sendMessage } from '../lib/telegram.js';
+import { sendMessage, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
@@ -416,6 +416,30 @@ function isAuthorized(msg) {
   return allowed.includes(String(msg.from?.id));
 }
 
+async function handleCallbackQuery(cb) {
+  // Quitar el ícono de carga del botón inmediatamente
+  await answerCallbackQuery(cb.id).catch(() => {});
+
+  const from = cb.from;
+  const data = cb.data;
+  const chatId = cb.message?.chat?.id;
+  const messageId = cb.message?.message_id;
+
+  // Verificar autorización
+  const allowed = process.env.TG_ALLOWED_USERS?.split(',').map(id => id.trim()).filter(Boolean) ?? [];
+  if (allowed.length > 0 && !allowed.includes(String(from?.id))) return;
+
+  // Eliminar botones del mensaje original para evitar doble-click
+  if (chatId && messageId) await removeButtons(chatId, messageId).catch(() => {});
+
+  if (data === 'no') {
+    await handleCancelAll();
+  } else if (data?.startsWith('si:')) {
+    const n = parseInt(data.replace('si:', ''));
+    if (!isNaN(n)) await handleConfirmN(n);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).end('ok');
 
@@ -427,6 +451,12 @@ export default async function handler(req, res) {
       req.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
     });
   } catch {
+    return res.status(200).end('ok');
+  }
+
+  // Manejar pulsación de botones inline
+  if (body?.callback_query) {
+    await handleCallbackQuery(body.callback_query).catch(() => {});
     return res.status(200).end('ok');
   }
 
