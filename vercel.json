@@ -3,8 +3,17 @@
   "crons": [
     { "path": "/api/cron",      "schedule": "0 14 * * 1-5" },
     { "path": "/api/cron",      "schedule": "0 19 * * 1-5" },
+
+    { "path": "/api/scan",      "schedule": "0 15 * * 1-5" },
+    { "path": "/api/scan",      "schedule": "0 16 * * 1-5" },
+    { "path": "/api/scan",      "schedule": "0 17 * * 1-5" },
+    { "path": "/api/scan",      "schedule": "0 18 * * 1-5" },
+
+    { "path": "/api/stoploss",  "schedule": "30 13 * * 1-5" },
     { "path": "/api/stoploss",  "schedule": "30 14 * * 1-5" },
+    { "path": "/api/stoploss",  "schedule": "30 15 * * 1-5" },
     { "path": "/api/stoploss",  "schedule": "30 16 * * 1-5" },
+    { "path": "/api/stoploss",  "schedule": "30 17 * * 1-5" },
     { "path": "/api/stoploss",  "schedule": "30 18 * * 1-5" }
   ],
   "functions": {
@@ -12,6 +21,7 @@
     "api/signal.js":    { "maxDuration": 30 },
     "api/cron.js":      { "maxDuration": 60 },
     "api/analyze.js":   { "maxDuration": 60 },
-    "api/stoploss.js":  { "maxDuration": 30 }
+    "api/stoploss.js":  { "maxDuration": 30 },
+    "api/scan.js":      { "maxDuration": 55 }
   }
 }
