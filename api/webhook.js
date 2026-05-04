@@ -1,5 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
-import { sendMessage, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
+import { sendMessage, sendMessageWithMainKeyboard, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
@@ -463,7 +463,18 @@ export default async function handler(req, res) {
   const msg = body?.message;
   if (!msg?.text) return res.status(200).end('ok');
 
-  const text = parseCommand(msg.text);
+  // Normalizar texto del teclado fijo a comandos estándar
+  const rawText = msg.text.trim();
+  const keyboardMap = {
+    '📊 Analizar':     'analizar',
+    '💼 Portafolio':   'portafolio',
+    '📋 Historial':    'historial',
+    '📌 Estado':       'estado',
+    '💵 Precio Dolar': 'precio dolar',
+    '❓ Ayuda':        'ayuda',
+  };
+  const mappedText = keyboardMap[rawText];
+  const text = mappedText ?? parseCommand(msg.text);
 
   const siMatch    = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
   const forzarMatch = text.match(/^forzar\s+([1-5](?:\s+[1-5])*)$/);
@@ -484,16 +495,14 @@ export default async function handler(req, res) {
   } else if (debugMatch) {
     await handleDebugCot(debugMatch[1]);
   } else if (text === 'ayuda' || text === 'help' || text === 'start') {
-    await sendMessage(
-      `🤖 *Comandos disponibles*\n\n` +
-      `*/analizar* — análisis completo del mercado\n` +
-      `*/portafolio* — posiciones actuales con P&L\n` +
-      `*/historial* — últimas operaciones\n` +
-      `*/precio TICKER* — cotización de un instrumento\n` +
-      `*/estado* — propuestas pendientes\n` +
-      `*/si 1/2/3* — ejecutar propuesta N (con check de noticias)\n` +
-      `*/forzar 1/2/3* — ejecutar saltando el check de noticias\n` +
-      `*/no* — cancelar todas las propuestas`
+    await sendMessageWithMainKeyboard(
+      `🤖 *IOL Bot — Comandos*\n\n` +
+      `📊 *Analizar* — análisis completo del mercado\n` +
+      `💼 *Portafolio* — posiciones actuales con P&L\n` +
+      `📋 *Historial* — últimas operaciones\n` +
+      `📌 *Estado* — propuestas pendientes\n` +
+      `💵 *Precio Dolar* — cotizaciones MEP/CCL/blue\n\n` +
+      `_También: /precio TICKER, /si 1/2/3, /forzar 1/2/3, /no_`
     );
   } else {
     // Sensitive commands: owner only
