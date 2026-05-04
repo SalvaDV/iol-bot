@@ -88,6 +88,8 @@ async function checkPositions() {
     }
 
     // ── 2. Toma parcial 1: +15% → vender 50% ───────────────────────────────
+    // IMPORTANTE: usamos `continue` al final para no procesar parcial_2 en el mismo
+    // run — evita doble venta si el precio salta >+20% de golpe.
     if (pnlPct >= PARTIAL_1_PCT && !state.partial_1_taken) {
       const qty1 = Math.floor(pos.cantidad / 2);
       if (qty1 >= 1) {
@@ -95,7 +97,6 @@ async function checkPositions() {
         if (result.ok) {
           const newState = { ...state, partial_1_taken: true, partial_1_qty: qty1, partial_1_price: result.precio };
           await upsertPositionHigh(sym, newState).catch(() => {});
-          Object.assign(state, newState);
           const ganancia = ((result.precio - pos.ppc) * qty1).toLocaleString('es-AR', { maximumFractionDigits: 0 });
           partialMsgs.push(
             `🏦 *${sym}* — 1ª TOMA +${(pnlPct * 100).toFixed(1)}%\n` +
@@ -104,11 +105,12 @@ async function checkPositions() {
           );
         }
       }
+      continue; // ← próximo run manejará la parcial_2 con cantidad ya actualizada en IOL
     }
 
     // ── 3. Toma parcial 2: +20% → vender 50% de lo que queda (25% original) ─
+    // Solo llega aquí si partial_1 ya fue tomada en un run anterior (cantidad ya reducida en IOL)
     if (pnlPct >= PARTIAL_2_PCT && state.partial_1_taken && !state.partial_2_taken) {
-      // Tras la primera toma, IOL ya refleja la cantidad reducida
       const qty2 = Math.floor(pos.cantidad / 2);
       if (qty2 >= 1) {
         const result = await autoVender(token, pos, 'parcial_2', qty2);
@@ -124,6 +126,7 @@ async function checkPositions() {
           );
         }
       }
+      continue; // ← trailing stop se maneja en el próximo run
     }
 
     // ── 4. Trailing stop: -8% desde máximo (maneja el free runner) ──────────

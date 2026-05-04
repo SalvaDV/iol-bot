@@ -34,7 +34,7 @@ async function runDailySummary() {
   const efectivo = cuentaPesos?.disponible ?? cuentaPesos?.saldo ?? cuenta.disponible ?? 0;
 
   const titulos   = normalizePortfolio(portfolio);
-  const today     = new Date().toISOString().slice(0, 10);
+  const today     = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
   const todayTrades = trades.filter(t => t.fecha === today);
 
   // ── P&L del día (trades de hoy) ───────────────────────────────────────────
