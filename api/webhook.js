@@ -505,6 +505,10 @@ export default async function handler(req, res) {
   }
 
   const msg = body?.message;
+  // DEBUG TEMPORAL — confirmar que el webhook recibe el mensaje
+  if (msg?.text) {
+    await sendMessage(`🔬 rcv: "${msg.text.slice(0,20)}" from=${msg.from?.id}`).catch(() => {});
+  }
   if (!msg?.text) return res.status(200).end('ok');
 
   // Normalizar texto del teclado fijo a comandos estándar
