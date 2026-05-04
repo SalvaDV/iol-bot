@@ -1,14 +1,24 @@
 import { sendMessage } from '../lib/telegram.js';
 import { savePendingSignal } from '../lib/supabase.js';
 
-export default async function handler(request) {
-  if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-  const apiKey = request.headers.get('x-api-key');
-  if (apiKey !== process.env.WEBHOOK_SECRET) return new Response('Unauthorized', { status: 401 });
+export const config = { runtime: 'nodejs', maxDuration: 30 };
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end('Method Not Allowed');
+
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== process.env.WEBHOOK_SECRET) return res.status(401).end('Unauthorized');
 
   let signal;
-  try { signal = await request.json(); }
-  catch { return new Response('Bad Request', { status: 400 }); }
+  try {
+    signal = await new Promise((resolve, reject) => {
+      let d = '';
+      req.on('data', c => { d += c; });
+      req.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+    });
+  } catch {
+    return res.status(400).end('Bad Request');
+  }
 
   try {
     const saved = await savePendingSignal({ ...signal, status: 'pending' });
@@ -27,13 +37,8 @@ export default async function handler(request) {
       `¿Confirmar? Respondé *si* o *no*`
     );
 
-    return new Response(JSON.stringify({ ok: true, id: saved?.id }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(200).json({ ok: true, id: saved?.id });
   } catch (err) {
-    return new Response(JSON.stringify({ ok: false, error: err.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ ok: false, error: err.message });
   }
 }
