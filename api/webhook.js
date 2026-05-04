@@ -1,5 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
-import { sendMessage, sendMessageWithMainKeyboard, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
+import { sendMessage, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
 } from '../lib/supabase.js';
@@ -495,7 +495,7 @@ export default async function handler(req, res) {
   } else if (debugMatch) {
     await handleDebugCot(debugMatch[1]);
   } else if (text === 'ayuda' || text === 'help' || text === 'start') {
-    await sendMessageWithMainKeyboard(
+    await sendMessage(
       `🤖 *IOL Bot — Comandos*\n\n` +
       `📊 *Analizar* — análisis completo del mercado\n` +
       `💼 *Portafolio* — posiciones actuales con P&L\n` +
