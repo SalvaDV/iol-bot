@@ -1,4 +1,4 @@
-import { getToken, getPortfolio } from '../lib/iol.js';
+import { getToken, getPortfolio, normalizePortfolio } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -19,19 +19,16 @@ async function checkStopLoss() {
   const portfolio = await getPortfolio(token);
   const alertas = [];
 
-  for (const pos of portfolio.titulos ?? []) {
-    const ppc = pos.ppc ?? pos.precioPromedio ?? pos.costoPromedio ?? null;
-    if (!ppc || ppc <= 0) continue;
+  for (const pos of normalizePortfolio(portfolio)) {
+    if (!pos.ppc || pos.ppc <= 0) continue;
+    if (!pos.ultimoPrecio || pos.ultimoPrecio <= 0) continue;
 
-    const precioActual = pos.ultimoPrecio ?? pos.precioActual ?? null;
-    if (!precioActual || precioActual <= 0) continue;
-
-    const caida = (ppc - precioActual) / ppc;
+    const caida = (pos.ppc - pos.ultimoPrecio) / pos.ppc;
     if (caida >= STOP_IOL) {
-      const pnlMonto = ((precioActual - ppc) * (pos.cantidad ?? 0)).toLocaleString('es-AR');
+      const pnlMonto = ((pos.ultimoPrecio - pos.ppc) * pos.cantidad).toLocaleString('es-AR');
       alertas.push(
         `🔴 *${pos.simbolo}* cayó *${(caida * 100).toFixed(1)}%* desde tu compra\n` +
-        `   PPC $${ppc.toLocaleString('es-AR')} → $${precioActual.toLocaleString('es-AR')} | P&L: $${pnlMonto} ARS`
+        `   PPC $${pos.ppc.toLocaleString('es-AR')} → $${pos.ultimoPrecio.toLocaleString('es-AR')} | P&L: $${pnlMonto} ARS`
       );
     }
   }

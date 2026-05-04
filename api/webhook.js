@@ -1,4 +1,4 @@
-import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento } from '../lib/iol.js';
+import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento, normalizePortfolio } from '../lib/iol.js';
 import { sendMessage, sendMessageWithButtons, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
@@ -145,8 +145,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
 
     if (pending.dir === 'venta') {
       const portfolio = await getPortfolio(token);
-      const pos = (portfolio.titulos || []).find(
-        t => t.simbolo?.toUpperCase() === pending.simbolo.toUpperCase()
+      const pos = normalizePortfolio(portfolio).find(
+        t => t.simbolo === pending.simbolo.toUpperCase()
       );
       cantidadFinal = pos?.cantidad || 0;
       if (!cantidadFinal) {
@@ -276,11 +276,11 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     if (tradeRow?.id) {
       try {
         const portfolioPost = await getPortfolio(token);
-        const pos = (portfolioPost.titulos || []).find(
-          t => t.simbolo?.toUpperCase() === pending.simbolo.toUpperCase()
+        const pos = normalizePortfolio(portfolioPost).find(
+          t => t.simbolo === pending.simbolo.toUpperCase()
         );
         if (pos) {
-          const precioReal = pos.ppc ?? pos.precioPromedio ?? pos.costoPromedio ?? null;
+          const precioReal   = pos.ppc ?? null;
           const cantidadReal = pos.cantidad ?? cantidadFinal;
           if (precioReal && precioReal > 0) {
             const montoReal = cantidadReal * precioReal;
@@ -311,7 +311,7 @@ async function handlePortafolio() {
     const token = await getToken();
     const [portfolio, cuenta] = await Promise.all([getPortfolio(token), getCuenta(token)]);
     const efectivo = cuenta.cuentas?.[0]?.disponible ?? 0;
-    const titulos = portfolio.titulos || [];
+    const titulos = normalizePortfolio(portfolio);
 
     if (titulos.length === 0) {
       await sendMessage(`💼 *Portafolio*\n\nSin posiciones abiertas.\n💵 Efectivo: $${efectivo.toLocaleString('es-AR')} ARS`);
@@ -319,15 +319,16 @@ async function handlePortafolio() {
     }
 
     const lines = titulos.map(t => {
-      const precio = t.ultimoPrecio ?? t.precioActual ?? 0;
-      const ppc = t.ppc ?? t.precioPromedio ?? t.costoPromedio ?? null;
-      const total = t.cantidad && precio ? (t.cantidad * precio) : 0;
-      const variacion = t.variacionDiaria != null ? `${t.variacionDiaria >= 0 ? '+' : ''}${t.variacionDiaria.toFixed(2)}%` : '?';
+      const precio = t.ultimoPrecio ?? 0;
+      const total  = t.cantidad && precio ? t.cantidad * precio : 0;
+      const variacion = t.variacionDiaria != null
+        ? `${t.variacionDiaria >= 0 ? '+' : ''}${t.variacionDiaria.toFixed(2)}%`
+        : '?';
 
       let pnlStr = '';
-      if (ppc && ppc > 0 && precio) {
-        const pnlPct = (precio - ppc) / ppc * 100;
-        const pnlMonto = (precio - ppc) * (t.cantidad || 0);
+      if (t.ppc && t.ppc > 0 && precio) {
+        const pnlPct   = (precio - t.ppc) / t.ppc * 100;
+        const pnlMonto = (precio - t.ppc) * (t.cantidad || 0);
         pnlStr = ` | PnL: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}% ($${pnlMonto.toLocaleString('es-AR')})`;
       }
 
@@ -335,8 +336,7 @@ async function handlePortafolio() {
     }).join('\n');
 
     const totalPortafolio = titulos.reduce((sum, t) => {
-      const precio = t.ultimoPrecio ?? t.precioActual ?? 0;
-      return sum + (t.cantidad && precio ? t.cantidad * precio : 0);
+      return sum + (t.cantidad && t.ultimoPrecio ? t.cantidad * t.ultimoPrecio : 0);
     }, 0);
 
     await sendMessage(
