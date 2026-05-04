@@ -1,6 +1,6 @@
 import { getToken, getPortfolio, normalizePortfolio, crearOrden, roundToTick } from '../lib/iol.js';
 import { sendMessage } from '../lib/telegram.js';
-import { logTrade, getPositionHighs, upsertPositionHigh, deletePositionHigh } from '../lib/supabase.js';
+import { logTrade, getPositionHighs, upsertPositionHigh, deletePositionHigh, addCooldown } from '../lib/supabase.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -82,6 +82,7 @@ async function checkPositions() {
     if (pnlPct <= -STOP_PCT) {
       const result = await autoVender(token, pos, 'stoploss');
       await deletePositionHigh(sym).catch(() => {});
+      await addCooldown(sym, 24, 'stoploss').catch(() => {});
       if (result.ok) {
         stopMsgs.push(
           `🔴 *${sym}* — VENTA AUTO (stop-loss)\n` +

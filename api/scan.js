@@ -1,7 +1,8 @@
-import { getToken, getPortfolio, normalizePortfolio } from '../lib/iol.js';
+import { getToken, getPortfolio, normalizePortfolio, crearOrden, roundToTick } from '../lib/iol.js';
 import { fetchAllTechnicals } from '../lib/analysis.js';
 import { sendMessage } from '../lib/telegram.js';
-import { getCustomWatchlist } from '../lib/supabase.js';
+import { getCustomWatchlist, logTrade, addCooldown } from '../lib/supabase.js';
+import { canSell } from '../lib/riskManager.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 55 };
 
@@ -40,6 +41,9 @@ export default async function handler(req, res) {
   }
 }
 
+// Señales que en conjunto invalidan la tesis de una posición → venta automática
+const THESIS_INVALIDATED = new Set(['DEATH_CROSS', 'MACD_BEARISH']);
+
 async function runQuickScan() {
   const token = await getToken();
 
@@ -49,23 +53,57 @@ async function runQuickScan() {
   ]);
 
   const posiciones   = normalizePortfolio(portfolio);
-  const portfolioSet = new Set(posiciones.map(t => t.simbolo).filter(Boolean));
+  const portfolioMap = new Map(posiciones.map(t => [t.simbolo, t]));
   const customSyms   = customWatchlist.map(w => w.simbolo?.toUpperCase()).filter(Boolean);
 
   // Análisis técnico completo (WATCHLIST + portafolio + watchlist personalizada)
-  const technicals = await fetchAllTechnicals(token, [...portfolioSet, ...customSyms]);
+  const technicals = await fetchAllTechnicals(token, [...portfolioMap.keys(), ...customSyms]);
 
-  const compras = [];
-  const ventas  = [];
+  const compras      = [];
+  const ventas       = [];
+  const autoVentas   = [];
 
   for (const t of technicals) {
     if (!t?.signals?.length) continue;
 
-    const isPortfolio = portfolioSet.has(t.sym);
+    const pos         = portfolioMap.get(t.sym);
+    const isPortfolio = !!pos;
 
-    // Criterio de alerta: al menos 1 señal fuerte
-    // Portafolio: cualquier señal fuerte
-    // Watchlist: mínimo 2 señales (al menos 1 fuerte)
+    // ── Auto-venta por tesis invalidada (solo posiciones en cartera) ─────────
+    if (isPortfolio && pos.cantidad > 0 && pos.ultimoPrecio > 0) {
+      const invalidSignals = t.signals.filter(s => THESIS_INVALIDATED.has(s.type));
+      // Necesita 2 señales de invalidación (ej: DEATH_CROSS + MACD_BEARISH) para evitar falsos
+      if (invalidSignals.length >= 2) {
+        const sellCheck = await canSell();
+        if (sellCheck.allowed) {
+          const precioLimite = roundToTick(pos.ultimoPrecio * 0.99, 'venta');
+          try {
+            await crearOrden(token, {
+              simbolo: t.sym, cantidad: pos.cantidad, precio: precioLimite, operacion: 'venta',
+            });
+            await logTrade({
+              fecha: new Date().toISOString().slice(0, 10),
+              hora:  new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+              simbolo: t.sym, accion: 'venta_tesis', precio: precioLimite,
+              cantidad: pos.cantidad, monto: Math.round(precioLimite * pos.cantidad),
+              senales: invalidSignals.map(s => s.detail), efectivo_pre: 0,
+            }).catch(() => {});
+            await addCooldown(t.sym, 12, 'tesis_invalidada').catch(() => {});
+            autoVentas.push(
+              `🔻 *${t.sym}* — VENTA AUTO (tesis invalidada)\n` +
+              `${pos.cantidad} u. @ $${precioLimite.toLocaleString('es-AR')}\n` +
+              `↳ ${invalidSignals.map(s => s.detail).join(' | ')}`
+            );
+            console.log(`[scan] venta tesis invalidada: ${t.sym}`);
+          } catch (e) {
+            console.log(`[scan] ${t.sym} venta error:`, e.message);
+          }
+        }
+        continue; // ya procesado
+      }
+    }
+
+    // ── Alertas informativas ─────────────────────────────────────────────────
     const strongCount = t.signals.filter(s => STRONG_SIGNALS.has(s.type)).length;
     if (strongCount === 0) continue;
     if (!isPortfolio && t.signals.length < 2) continue;
@@ -77,18 +115,21 @@ async function runQuickScan() {
 
     if (t.dir === 'compra') compras.push(line);
     else if (t.dir === 'venta') ventas.push(line);
-    else compras.push(line); // neutral con señal fuerte → incluir en compras
+    else compras.push(line);
+  }
+
+  const hora = new Date().toLocaleTimeString('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit',
+  });
+
+  if (autoVentas.length > 0) {
+    await sendMessage(`🔻 *VENTA AUTOMÁTICA — tesis invalidada*\n\n${autoVentas.join('\n\n')}`);
   }
 
   if (compras.length === 0 && ventas.length === 0) {
     console.log('[scan] sin señales relevantes');
     return;
   }
-
-  const hora = new Date().toLocaleTimeString('es-AR', {
-    timeZone: 'America/Argentina/Buenos_Aires',
-    hour: '2-digit', minute: '2-digit',
-  });
 
   const partes = [];
   if (compras.length > 0) partes.push(`📈 *OPORTUNIDADES*\n${compras.join('\n\n')}`);

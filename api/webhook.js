@@ -2,7 +2,7 @@ import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden,
 import { sendMessage, sendMessageWithButtons, replyForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
-  getUserState, setUserState, clearUserState, addToWatchlist,
+  getUserState, setUserState, clearUserState, addToWatchlist, getBotConfig, setBotConfig, getCooldowns,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -559,6 +559,8 @@ export default async function handler(req, res) {
   } else if (debugMatch) {
     await handleDebugCot(debugMatch[1]);
   } else if (text === 'ayuda' || text === 'help' || text === 'start') {
+    const paused = await getBotConfig('trading_paused').catch(() => 'false');
+    const estadoBot = paused === 'true' ? '🔴 *PAUSADO*' : '🟢 *ACTIVO*';
     await sendMessage(
       `🤖 *IOL Bot — Comandos*\n\n` +
       `📊 *Analizar* — análisis completo del mercado\n` +
@@ -566,13 +568,35 @@ export default async function handler(req, res) {
       `📋 *Historial* — últimas operaciones\n` +
       `📌 *Estado* — propuestas pendientes\n` +
       `💵 *Precio Dolar* — cotizaciones MEP/CCL/blue\n\n` +
-      `_También: /buscar TICKER, /precio TICKER, /si 1/2/3, /forzar 1/2/3, /no_`
+      `🛑 */pausar* — detener trading automático\n` +
+      `▶️ */reanudar* — reactivar trading automático\n` +
+      `🔎 */cooldowns* — ver qué símbolos están en cooldown\n\n` +
+      `_Estado del bot: ${estadoBot}_\n` +
+      `_También: /buscar TICKER, /precio TICKER_`
     );
   } else {
     // Sensitive commands: owner only
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
-    if (text === 'agregar') {
+    if (text === 'pausar') {
+      await setBotConfig('trading_paused', 'true');
+      await sendMessage('🛑 *Trading automático PAUSADO*\nNo se ejecutarán órdenes hasta que uses /reanudar.');
+    } else if (text === 'reanudar') {
+      await setBotConfig('trading_paused', 'false');
+      await sendMessage('▶️ *Trading automático REACTIVADO*\nEl bot volverá a operar normalmente.');
+    } else if (text === 'cooldowns') {
+      const cooldowns = await getCooldowns().catch(() => ({}));
+      const syms = Object.keys(cooldowns);
+      if (syms.length === 0) {
+        await sendMessage('✅ No hay símbolos en cooldown.');
+      } else {
+        const lines = syms.map(sym => {
+          const until = new Date(cooldowns[sym]).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+          return `• *${sym}* — bloqueado hasta ${until}`;
+        });
+        await sendMessage(`⏳ *Cooldowns activos:*\n\n${lines.join('\n')}`);
+      }
+    } else if (text === 'agregar') {
       // Responde al mensaje del usuario con force_reply.
       // Al ser respuesta del bot, Telegram la entrega al webhook aunque
       // el grupo tenga privacy mode ON. selective:true muestra el campo
