@@ -2,7 +2,7 @@ import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden,
 import { sendMessage, sendMessageWithButtons, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
-  getUserState, setUserState, clearUserState, addToWatchlist,
+  addToWatchlist,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -521,24 +521,11 @@ export default async function handler(req, res) {
   const mappedText = keyboardMap[rawText];
   const text = mappedText ?? parseCommand(msg.text);
 
-  // Interceptar flujo conversacional de "agregar instrumento" (awaiting_ticker)
-  // Solo si no es un botón del teclado principal (para no interferir con comandos normales)
   const userId = msg.from?.id;
-  if (userId && !mappedText && isAuthorized(msg)) {
-    let state = null;
-    try {
-      state = await getUserState(userId);
-    } catch (e) {
-      console.error('[state] getUserState error:', e.message);
-    }
-    if (state?.action === 'awaiting_ticker') {
-      await clearUserState(userId).catch(() => {});
-      await handleSearchInstrumento(rawText);
-      return res.status(200).end('ok');
-    }
-  }
+  // Comando /buscar TICKER — sin estado conversacional
+  const buscarMatch = text.match(/^buscar\s+(\S+)$/);
 
-  const siMatch    = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
+  const siMatch     = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
   const forzarMatch = text.match(/^forzar\s+([1-5](?:\s+[1-5])*)$/);
   const precioMatch = text.match(/^precio\s+(\w+)$/);
   const debugMatch  = text.match(/^debug\s+(\w+)$/);
@@ -552,6 +539,8 @@ export default async function handler(req, res) {
     const { getDolarData, formatDolarContext } = await import('../lib/dolar.js');
     const d = await getDolarData();
     await sendMessage(`💵 *Dólar — cotizaciones actuales*\n\n${formatDolarContext(d)}`);
+  } else if (buscarMatch && isAuthorized(msg)) {
+    await handleSearchInstrumento(buscarMatch[1]);
   } else if (precioMatch) {
     await handlePrecio(precioMatch[1]);
   } else if (debugMatch) {
@@ -564,24 +553,21 @@ export default async function handler(req, res) {
       `📋 *Historial* — últimas operaciones\n` +
       `📌 *Estado* — propuestas pendientes\n` +
       `💵 *Precio Dolar* — cotizaciones MEP/CCL/blue\n\n` +
-      `_También: /precio TICKER, /si 1/2/3, /forzar 1/2/3, /no_`
+      `_También: /buscar TICKER, /precio TICKER, /si 1/2/3, /forzar 1/2/3, /no_`
     );
   } else {
     // Sensitive commands: owner only
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
     if (text === 'agregar') {
-      try {
-        if (userId) await setUserState(userId, 'awaiting_ticker', {});
-      } catch (e) {
-        console.error('[state] setUserState error:', e.message);
-        await sendMessage(`❌ Error guardando estado: ${e.message}`).catch(() => {});
-        return res.status(200).end('ok');
-      }
       await sendMessage(
         `📝 *Agregar instrumento a watchlist*\n\n` +
-        `Escribí el ticker que querés agregar:\n` +
-        `_Ejemplos: GGAL, MELI, AL30, AAPL, CRM, NVDA..._`
+        `Mandá: */buscar TICKER*\n\n` +
+        `Ejemplos:\n` +
+        `• /buscar CRM\n` +
+        `• /buscar NVDA\n` +
+        `• /buscar AL35\n` +
+        `• /buscar AAPL`
       );
     } else if (text === 'analizar') {
       await handleAnalisis();
