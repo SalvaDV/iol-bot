@@ -5,7 +5,7 @@ import { logTrade } from '../lib/supabase.js';
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
 const STOP_PCT   = 0.08;  // -8%  desde PPC → venta automática
-const PROFIT_PCT = 0.20;  // +20% desde PPC → toma de ganancias automática
+const PROFIT_PCT = 0.30;  // +30% desde PPC → toma de ganancias automática
 
 export default async function handler(req, res) {
   res.status(200).end('ok');
