@@ -1,7 +1,8 @@
-import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick } from '../lib/iol.js';
-import { sendMessage, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
+import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento } from '../lib/iol.js';
+import { sendMessage, sendMessageWithButtons, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
+  getUserState, setUserState, clearUserState, addToWatchlist,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -416,6 +417,36 @@ function isAuthorized(msg) {
   return allowed.includes(String(msg.from?.id));
 }
 
+async function handleSearchInstrumento(ticker) {
+  const sym = ticker.toUpperCase().trim();
+  if (!sym || sym.length > 10) {
+    await sendMessage(`❌ Ticker inválido: *${sym}*\nUsá un ticker como GGAL, MELI, AL30 o AAPL.`);
+    return;
+  }
+  try {
+    const token = await getToken();
+    const inst = await searchInstrumento(token, sym);
+    await sendMessageWithButtons(
+      `🔍 *Instrumento encontrado:*\n\n` +
+      `📌 *${inst.simbolo}* — ${inst.nombre}\n` +
+      `💵 Precio actual: $${inst.precio ?? '?'}\n` +
+      `🏦 Mercado: ${inst.mercado.toUpperCase()}\n\n` +
+      `¿Querés agregarlo a tu watchlist personalizada?`,
+      [
+        [
+          { text: '✅ Confirmar', callback_data: `agregar_confirm:${inst.simbolo}:${inst.mercado}` },
+          { text: '❌ Cancelar', callback_data: 'agregar_cancel' },
+        ],
+      ]
+    );
+  } catch {
+    await sendMessage(
+      `❌ No encontré cotización para *${sym}*.\n` +
+      `Verificá que el ticker sea correcto (ej: GGAL, MELI, AL30, AAPL).`
+    );
+  }
+}
+
 async function handleCallbackQuery(cb) {
   // Quitar el ícono de carga del botón inmediatamente
   await answerCallbackQuery(cb.id).catch(() => {});
@@ -437,6 +468,19 @@ async function handleCallbackQuery(cb) {
   } else if (data?.startsWith('si:')) {
     const n = parseInt(data.replace('si:', ''));
     if (!isNaN(n)) await handleConfirmN(n);
+  } else if (data?.startsWith('agregar_confirm:')) {
+    // formato: agregar_confirm:SYM:mercado
+    const parts = data.split(':');
+    const sym     = parts[1] ?? '';
+    const mercado = parts[2] ?? 'bcba';
+    try {
+      await addToWatchlist(sym, sym, mercado); // nombre = sym (se puede enriquecer luego)
+      await sendMessage(`✅ *${sym}* agregado a tu watchlist personalizada.\nSe incluirá en el próximo análisis del mercado.`);
+    } catch (e) {
+      await sendMessage(`⚠️ ${e.message}`);
+    }
+  } else if (data === 'agregar_cancel') {
+    await sendMessage('❌ Operación cancelada.');
   }
 }
 
@@ -472,9 +516,26 @@ export default async function handler(req, res) {
     '📌 Estado':       'estado',
     '💵 Precio Dolar': 'precio dolar',
     '❓ Ayuda':        'ayuda',
+    '➕ Agregar':      'agregar',
   };
   const mappedText = keyboardMap[rawText];
   const text = mappedText ?? parseCommand(msg.text);
+
+  // Interceptar flujo conversacional de "agregar instrumento" (awaiting_ticker)
+  // Solo si no es un botón del teclado principal (para no interferir con comandos normales)
+  const userId = msg.from?.id;
+  if (userId && !mappedText && isAuthorized(msg)) {
+    try {
+      const state = await getUserState(userId);
+      if (state?.action === 'awaiting_ticker') {
+        await clearUserState(userId).catch(() => {});
+        await handleSearchInstrumento(rawText);
+        return res.status(200).end('ok');
+      }
+    } catch {
+      // Si falla la lectura de estado, continuamos con el flujo normal
+    }
+  }
 
   const siMatch    = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
   const forzarMatch = text.match(/^forzar\s+([1-5](?:\s+[1-5])*)$/);
@@ -508,7 +569,14 @@ export default async function handler(req, res) {
     // Sensitive commands: owner only
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
-    if (text === 'analizar') {
+    if (text === 'agregar') {
+      if (userId) await setUserState(userId, 'awaiting_ticker', {}).catch(() => {});
+      await sendMessage(
+        `📝 *Agregar instrumento a watchlist*\n\n` +
+        `Escribí el ticker que querés agregar:\n` +
+        `_Ejemplos: GGAL, MELI, AL30, AAPL, CRM, NVDA..._`
+      );
+    } else if (text === 'analizar') {
       await handleAnalisis();
     } else if (siMatch) {
       const nums = [...new Set(siMatch[1].trim().split(/\s+/).map(Number))].sort();
