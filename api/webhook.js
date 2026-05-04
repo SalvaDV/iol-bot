@@ -545,7 +545,8 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log(`[agregar] userId=${userId} text="${rawText}" forceReply=${isForceReply} state=${stateDebug} pending=${isStatePending}`);
+    // DEBUG TEMPORAL — borrar después
+    await sendMessage(`🔬 debug: uid=${userId} fr=${isForceReply} st=${stateDebug} pend=${isStatePending}`).catch(() => {});
 
     if (isForceReply || isStatePending) {
       await handleSearchInstrumento(rawText);
