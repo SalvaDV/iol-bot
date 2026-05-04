@@ -525,15 +525,16 @@ export default async function handler(req, res) {
   // Solo si no es un botón del teclado principal (para no interferir con comandos normales)
   const userId = msg.from?.id;
   if (userId && !mappedText && isAuthorized(msg)) {
+    let state = null;
     try {
-      const state = await getUserState(userId);
-      if (state?.action === 'awaiting_ticker') {
-        await clearUserState(userId).catch(() => {});
-        await handleSearchInstrumento(rawText);
-        return res.status(200).end('ok');
-      }
-    } catch {
-      // Si falla la lectura de estado, continuamos con el flujo normal
+      state = await getUserState(userId);
+    } catch (e) {
+      console.error('[state] getUserState error:', e.message);
+    }
+    if (state?.action === 'awaiting_ticker') {
+      await clearUserState(userId).catch(() => {});
+      await handleSearchInstrumento(rawText);
+      return res.status(200).end('ok');
     }
   }
 
@@ -570,7 +571,13 @@ export default async function handler(req, res) {
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
     if (text === 'agregar') {
-      if (userId) await setUserState(userId, 'awaiting_ticker', {}).catch(() => {});
+      try {
+        if (userId) await setUserState(userId, 'awaiting_ticker', {});
+      } catch (e) {
+        console.error('[state] setUserState error:', e.message);
+        await sendMessage(`❌ Error guardando estado: ${e.message}`).catch(() => {});
+        return res.status(200).end('ok');
+      }
       await sendMessage(
         `📝 *Agregar instrumento a watchlist*\n\n` +
         `Escribí el ticker que querés agregar:\n` +
