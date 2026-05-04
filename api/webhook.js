@@ -1,5 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento, normalizePortfolio } from '../lib/iol.js';
-import { sendMessage, sendMessageWithButtons, sendForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
+import { sendMessage, sendMessageWithButtons, replyForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
   getUserState, setUserState, clearUserState, addToWatchlist,
@@ -505,10 +505,6 @@ export default async function handler(req, res) {
   }
 
   const msg = body?.message;
-  // DEBUG TEMPORAL — confirmar que el webhook recibe el mensaje
-  if (msg?.text) {
-    await sendMessage(`🔬 rcv: "${msg.text.slice(0,20)}" from=${msg.from?.id}`).catch(() => {});
-  }
   if (!msg?.text) return res.status(200).end('ok');
 
   // Normalizar texto del teclado fijo a comandos estándar
@@ -531,31 +527,12 @@ export default async function handler(req, res) {
   // Detectar de dos formas (cualquiera que funcione en el cliente Telegram):
   // 1. El usuario respondió al force_reply del bot (reply_to_message.text)
   // 2. El usuario mandó un mensaje nuevo y hay estado pendiente en Supabase
-  if (isAuthorized(msg) && !mappedText) {
-    const replyToText = msg.reply_to_message?.text ?? '';
-    const isForceReply = replyToText.includes('Agregar instrumento');
-
-    let isStatePending = false;
-    let stateDebug = 'no-check';
-    if (!isForceReply && userId) {
-      try {
-        const state = await getUserState(userId);
-        stateDebug = state ? `action=${state.action}` : 'null';
-        isStatePending = state?.action === 'awaiting_ticker';
-        if (isStatePending) await clearUserState(userId).catch(() => {});
-      } catch (e) {
-        stateDebug = `error:${e.message}`;
-        await sendMessage(`⚠️ debug getUserState error: ${e.message}`).catch(() => {});
-      }
-    }
-
-    // DEBUG TEMPORAL — borrar después
-    await sendMessage(`🔬 debug: uid=${userId} fr=${isForceReply} st=${stateDebug} pend=${isStatePending}`).catch(() => {});
-
-    if (isForceReply || isStatePending) {
-      await handleSearchInstrumento(rawText);
-      return res.status(200).end('ok');
-    }
+  // Detectar respuesta al force_reply de "Agregar instrumento"
+  // El bot responde al mensaje del usuario — por eso llega al webhook con privacy mode ON
+  const replyToText = msg.reply_to_message?.text ?? '';
+  if (replyToText.includes('Agregar instrumento') && isAuthorized(msg)) {
+    await handleSearchInstrumento(rawText);
+    return res.status(200).end('ok');
   }
 
   // Comando /buscar TICKER — alternativa explícita
@@ -596,13 +573,14 @@ export default async function handler(req, res) {
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
     if (text === 'agregar') {
-      // Guardar estado en Supabase (para mensajes nuevos sin reply)
-      if (userId) await setUserState(userId, 'awaiting_ticker', {}).catch(e =>
-        console.error('[agregar] setUserState error:', e.message)
-      );
-      // force_reply: en algunos clientes Telegram abre el campo de respuesta automáticamente
-      await sendForceReply(
-        'Agregar instrumento a tu watchlist\n\nEscribí el ticker y envialo:\nEjemplos: CRM, NVDA, AL35, AAPL'
+      // Responde al mensaje del usuario con force_reply.
+      // Al ser respuesta del bot, Telegram la entrega al webhook aunque
+      // el grupo tenga privacy mode ON. selective:true muestra el campo
+      // de respuesta solo al usuario que presionó el botón.
+      await replyForceReply(
+        msg.chat.id,
+        msg.message_id,
+        'Agregar instrumento a tu watchlist\n\nEscribí el ticker como respuesta a este mensaje:\nEjemplos: CRM, NVDA, AL35, AAPL'
       );
     } else if (text === 'analizar') {
       await handleAnalisis();
