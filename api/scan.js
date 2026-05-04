@@ -1,8 +1,7 @@
-import { getToken, getPortfolio, normalizePortfolio, crearOrden, roundToTick } from '../lib/iol.js';
+import { getToken, getPortfolio, normalizePortfolio, roundToTick } from '../lib/iol.js';
 import { fetchAllTechnicals } from '../lib/analysis.js';
-import { sendMessage } from '../lib/telegram.js';
-import { getCustomWatchlist, logTrade, addCooldown } from '../lib/supabase.js';
-import { canSell } from '../lib/riskManager.js';
+import { sendMessage, sendMessageWithButtons } from '../lib/telegram.js';
+import { getCustomWatchlist, addCooldown } from '../lib/supabase.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 55 };
 
@@ -69,37 +68,29 @@ async function runQuickScan() {
     const pos         = portfolioMap.get(t.sym);
     const isPortfolio = !!pos;
 
-    // ── Auto-venta por tesis invalidada (solo posiciones en cartera) ─────────
+    // ── Alerta urgente por tesis invalidada (solo posiciones en cartera) ──────
     if (isPortfolio && pos.cantidad > 0 && pos.ultimoPrecio > 0) {
       const invalidSignals = t.signals.filter(s => THESIS_INVALIDATED.has(s.type));
       // Necesita 2 señales de invalidación (ej: DEATH_CROSS + MACD_BEARISH) para evitar falsos
       if (invalidSignals.length >= 2) {
-        const sellCheck = await canSell();
-        if (sellCheck.allowed) {
-          const precioLimite = roundToTick(pos.ultimoPrecio * 0.99, 'venta');
-          try {
-            await crearOrden(token, {
-              simbolo: t.sym, cantidad: pos.cantidad, precio: precioLimite, operacion: 'venta',
-            });
-            await logTrade({
-              fecha: new Date().toISOString().slice(0, 10),
-              hora:  new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
-              simbolo: t.sym, accion: 'venta_tesis', precio: precioLimite,
-              cantidad: pos.cantidad, monto: Math.round(precioLimite * pos.cantidad),
-              senales: invalidSignals.map(s => s.detail), efectivo_pre: 0,
-            }).catch(() => {});
-            await addCooldown(t.sym, 12, 'tesis_invalidada').catch(() => {});
-            autoVentas.push(
-              `🔻 *${t.sym}* — VENTA AUTO (tesis invalidada)\n` +
-              `${pos.cantidad} u. @ $${precioLimite.toLocaleString('es-AR')}\n` +
-              `↳ ${invalidSignals.map(s => s.detail).join(' | ')}`
-            );
-            console.log(`[scan] venta tesis invalidada: ${t.sym}`);
-          } catch (e) {
-            console.log(`[scan] ${t.sym} venta error:`, e.message);
-          }
-        }
-        continue; // ya procesado
+        const precioLimite = roundToTick(pos.ultimoPrecio * 0.99, 'venta');
+        const montoEstimado = Math.round(pos.cantidad * precioLimite).toLocaleString('es-AR');
+        await sendMessageWithButtons(
+          `🚨 *ALERTA URGENTE — Tesis invalidada*\n\n` +
+          `📉 *${t.sym}* está en tu cartera y sus señales técnicas se deterioraron gravemente:\n` +
+          `↳ ${invalidSignals.map(s => s.detail).join(' | ')}\n\n` +
+          `Posición: *${pos.cantidad} u. @ $${precioLimite.toLocaleString('es-AR')}* (≈$${montoEstimado} ARS)\n\n` +
+          `⚠️ La tesis de compra ya no es válida. Cada hora de demora puede significar mayor pérdida.\n` +
+          `¿Vendemos ahora?`,
+          [[
+            { text: '📉 Sí, vender', callback_data: `scan_sell:${t.sym}:${pos.cantidad}:${precioLimite}` },
+            { text: '❌ No, mantener', callback_data: 'scan_ignore' },
+          ]],
+        );
+        await addCooldown(t.sym, 12, 'tesis_invalidada').catch(() => {});
+        autoVentas.push(t.sym);
+        console.log(`[scan] alerta tesis invalidada: ${t.sym}`);
+        continue;
       }
     }
 
@@ -122,9 +113,7 @@ async function runQuickScan() {
     timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit',
   });
 
-  if (autoVentas.length > 0) {
-    await sendMessage(`🔻 *VENTA AUTOMÁTICA — tesis invalidada*\n\n${autoVentas.join('\n\n')}`);
-  }
+  // Las alertas de tesis invalidada ya se enviaron con botones inline arriba
 
   if (compras.length === 0 && ventas.length === 0) {
     console.log('[scan] sin señales relevantes');

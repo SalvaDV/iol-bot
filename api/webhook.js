@@ -481,6 +481,40 @@ async function handleCallbackQuery(cb) {
     }
   } else if (data === 'agregar_cancel') {
     await sendMessage('❌ Operación cancelada.');
+  } else if (data?.startsWith('scan_sell:')) {
+    // formato: scan_sell:SYM:CANTIDAD:PRECIO
+    const parts = data.split(':');
+    const sym      = parts[1];
+    const cantidad = parseInt(parts[2]);
+    const precio   = parseFloat(parts[3]);
+    if (!sym || isNaN(cantidad) || isNaN(precio)) {
+      await sendMessage('❌ Error al parsear la orden de venta.');
+      return;
+    }
+    const mercadoStatus = getMercadoStatus();
+    if (!mercadoStatus.abierto) {
+      await sendMessage(`🔴 *Mercado cerrado* — ${mercadoStatus.motivo}\nLa orden se enviará igual pero puede no ejecutarse hoy.`);
+    }
+    try {
+      const token = await getToken();
+      const orden = await crearOrden(token, { simbolo: sym, cantidad, precio, operacion: 'venta' });
+      const ordenNum = orden.numero ?? orden.id ?? orden.nroOperacion ?? null;
+      await logTrade({
+        fecha: new Date().toISOString().slice(0, 10),
+        hora:  new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+        simbolo: sym, accion: 'venta_tesis', precio, cantidad,
+        monto: Math.round(precio * cantidad), senales: ['tesis_invalidada'], efectivo_pre: 0,
+      }).catch(() => {});
+      await sendMessage(
+        `✅ *Orden enviada*\n\n📉 *${sym}* — VENTA\n` +
+        `📦 ${cantidad} u. @ $${precio.toLocaleString('es-AR')}\n` +
+        `🔑 Orden #${ordenNum ?? 'N/A'}`
+      );
+    } catch (e) {
+      await sendMessage(`❌ Error al enviar la orden: ${e.message}`);
+    }
+  } else if (data === 'scan_ignore') {
+    await sendMessage('👍 Entendido — posición mantenida. El bot seguirá monitoreando.');
   }
 }
 
