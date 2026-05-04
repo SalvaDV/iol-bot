@@ -4,10 +4,10 @@ import { logTrade, getPositionHighs, upsertPositionHigh, deletePositionHigh, add
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
-const STOP_PCT         = 0.08;  // -8%  desde PPC → stop-loss fijo
-const PARTIAL_PCT      = 0.15;  // +15% desde PPC → toma parcial (50%)
-const PROFIT_PCT       = 0.30;  // +30% desde PPC → take-profit total
-const TRAIL_PCT        = 0.08;  // -8%  desde el máximo → trailing stop
+const STOP_PCT      = 0.08;  // -8%  stop-loss fijo desde PPC
+const PARTIAL_1_PCT = 0.15;  // +15% → vender 50%  (recuperar capital)
+const PARTIAL_2_PCT = 0.20;  // +20% → vender 25%  (50% del resto)
+const TRAIL_PCT     = 0.08;  // -8%  desde el máximo → trailing stop (maneja el 25% restante sin límite)
 
 export default async function handler(req, res) {
   res.status(200).end('ok');
@@ -46,14 +46,11 @@ async function checkPositions() {
   const token      = await getToken();
   const portfolio  = await getPortfolio(token);
   const posiciones = normalizePortfolio(portfolio);
+  const highs      = await getPositionHighs().catch(() => ({}));
 
-  // Estado persistido por símbolo: { high_price, partial_taken, partial_qty, partial_price }
-  const highs = await getPositionHighs().catch(() => ({}));
-
-  const stopMsgs    = [];
-  const partialMsgs = [];
-  const profitMsgs  = [];
-  const trailMsgs   = [];
+  const stopMsgs     = [];
+  const partialMsgs  = [];
+  const trailMsgs    = [];
   const activeSymbols = new Set();
 
   for (const pos of posiciones) {
@@ -64,7 +61,9 @@ async function checkPositions() {
     const sym    = pos.simbolo;
     const precio = pos.ultimoPrecio;
     const pnlPct = (precio - pos.ppc) / pos.ppc;
-    const state  = highs[sym] ?? { high_price: precio, partial_taken: false };
+    const state  = highs[sym] ?? {
+      high_price: precio, partial_1_taken: false, partial_2_taken: false,
+    };
 
     activeSymbols.add(sym);
 
@@ -88,53 +87,56 @@ async function checkPositions() {
       continue;
     }
 
-    // ── 2. Take-profit total: +30% desde PPC ───────────────────────────────
-    if (pnlPct >= PROFIT_PCT) {
-      const result = await autoVender(token, pos, 'takeprofit');
-      await deletePositionHigh(sym).catch(() => {});
-      const pnlStr = ((precio - pos.ppc) * pos.cantidad).toLocaleString('es-AR', { maximumFractionDigits: 0 });
-      profitMsgs.push(result.ok
-        ? `🟢 *${sym}* — TAKE-PROFIT +${(pnlPct * 100).toFixed(1)}%\nGanancia: $${pnlStr} ARS | Orden @ $${result.precio.toLocaleString('es-AR')}`
-        : `🟢 *${sym}* +${(pnlPct * 100).toFixed(1)}% — no se pudo vender: ${result.error}`
-      );
-      continue;
-    }
-
-    // ── 3. Toma parcial: +15% → vender 50%, dejar correr el resto ──────────
-    if (pnlPct >= PARTIAL_PCT && !state.partial_taken) {
-      const parcialQty = Math.floor(pos.cantidad / 2);
-      if (parcialQty >= 1) {
-        const result = await autoVender(token, pos, 'parcial', parcialQty);
+    // ── 2. Toma parcial 1: +15% → vender 50% ───────────────────────────────
+    if (pnlPct >= PARTIAL_1_PCT && !state.partial_1_taken) {
+      const qty1 = Math.floor(pos.cantidad / 2);
+      if (qty1 >= 1) {
+        const result = await autoVender(token, pos, 'parcial_1', qty1);
         if (result.ok) {
-          await upsertPositionHigh(sym, {
-            ...state,
-            partial_taken: true,
-            partial_qty:   parcialQty,
-            partial_price: result.precio,
-          }).catch(() => {});
-          state.partial_taken = true;
-          const ganancia = ((result.precio - pos.ppc) * parcialQty).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+          const newState = { ...state, partial_1_taken: true, partial_1_qty: qty1, partial_1_price: result.precio };
+          await upsertPositionHigh(sym, newState).catch(() => {});
+          Object.assign(state, newState);
+          const ganancia = ((result.precio - pos.ppc) * qty1).toLocaleString('es-AR', { maximumFractionDigits: 0 });
           partialMsgs.push(
-            `🏦 *${sym}* — TOMA PARCIAL +${(pnlPct * 100).toFixed(1)}%\n` +
-            `Vendí ${parcialQty} u. (50%) @ $${result.precio.toLocaleString('es-AR')} — ganancia $${ganancia} ARS\n` +
-            `Quedan ${pos.cantidad - parcialQty} u. con trailing stop activo`
+            `🏦 *${sym}* — 1ª TOMA +${(pnlPct * 100).toFixed(1)}%\n` +
+            `Vendí ${qty1} u. (50%) @ $${result.precio.toLocaleString('es-AR')} — +$${ganancia} ARS\n` +
+            `Quedan ${pos.cantidad - qty1} u. | Próxima toma a +20%`
           );
         }
       }
-      // No hacer continue: el resto de la posición sigue siendo monitoreado
     }
 
-    // ── 4. Trailing stop: -8% desde máximo histórico ────────────────────────
-    // Solo si la posición llegó a +5% en algún momento
+    // ── 3. Toma parcial 2: +20% → vender 50% de lo que queda (25% original) ─
+    if (pnlPct >= PARTIAL_2_PCT && state.partial_1_taken && !state.partial_2_taken) {
+      // Tras la primera toma, IOL ya refleja la cantidad reducida
+      const qty2 = Math.floor(pos.cantidad / 2);
+      if (qty2 >= 1) {
+        const result = await autoVender(token, pos, 'parcial_2', qty2);
+        if (result.ok) {
+          const newState = { ...state, partial_2_taken: true, partial_2_qty: qty2, partial_2_price: result.precio };
+          await upsertPositionHigh(sym, newState).catch(() => {});
+          Object.assign(state, newState);
+          const ganancia = ((result.precio - pos.ppc) * qty2).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+          partialMsgs.push(
+            `🏦 *${sym}* — 2ª TOMA +${(pnlPct * 100).toFixed(1)}%\n` +
+            `Vendí ${qty2} u. (25% original) @ $${result.precio.toLocaleString('es-AR')} — +$${ganancia} ARS\n` +
+            `Quedan ${pos.cantidad - qty2} u. libres 🚀 — trailing stop activo`
+          );
+        }
+      }
+    }
+
+    // ── 4. Trailing stop: -8% desde máximo (maneja el free runner) ──────────
+    // Se activa cuando la posición llegó al menos a +5% en algún momento
     if (pnlPct > 0 && state.high_price > pos.ppc * 1.05) {
-      const trailTrigger  = state.high_price * (1 - TRAIL_PCT);
+      const trailTrigger = state.high_price * (1 - TRAIL_PCT);
       if (precio <= trailTrigger) {
         const retrocesoPct = ((state.high_price - precio) / state.high_price) * 100;
         const result       = await autoVender(token, pos, 'trailing');
         await deletePositionHigh(sym).catch(() => {});
         const pnlStr = ((precio - pos.ppc) * pos.cantidad).toLocaleString('es-AR', { maximumFractionDigits: 0 });
         trailMsgs.push(result.ok
-          ? `🟡 *${sym}* — TRAILING STOP (-${retrocesoPct.toFixed(1)}% desde pico)\nMáx: $${state.high_price.toLocaleString('es-AR')} → $${precio.toLocaleString('es-AR')} | P&L: $${pnlStr} ARS`
+          ? `🟡 *${sym}* — TRAILING STOP (-${retrocesoPct.toFixed(1)}% desde pico $${state.high_price.toLocaleString('es-AR')})\nCierre @ $${result.precio.toLocaleString('es-AR')} | P&L acumulado: +$${pnlStr} ARS`
           : `🟡 *${sym}* retrocedió ${retrocesoPct.toFixed(1)}% desde su máximo — no se pudo vender: ${result.error}`
         );
       }
@@ -146,8 +148,7 @@ async function checkPositions() {
     if (!activeSymbols.has(sym)) await deletePositionHigh(sym).catch(() => {});
   }
 
-  if (stopMsgs.length    > 0) await sendMessage(`🚨 *AUTO STOP-LOSS*\n\n${stopMsgs.join('\n\n')}`);
+  if (stopMsgs.length   > 0) await sendMessage(`🚨 *AUTO STOP-LOSS*\n\n${stopMsgs.join('\n\n')}`);
   if (partialMsgs.length > 0) await sendMessage(`🏦 *TOMA PARCIAL DE GANANCIAS*\n\n${partialMsgs.join('\n\n')}`);
-  if (profitMsgs.length  > 0) await sendMessage(`💰 *AUTO TAKE-PROFIT*\n\n${profitMsgs.join('\n\n')}`);
-  if (trailMsgs.length   > 0) await sendMessage(`🟡 *AUTO TRAILING STOP*\n\n${trailMsgs.join('\n\n')}`);
+  if (trailMsgs.length  > 0) await sendMessage(`🟡 *AUTO TRAILING STOP*\n\n${trailMsgs.join('\n\n')}`);
 }
