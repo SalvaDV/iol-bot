@@ -1,5 +1,5 @@
 import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento, normalizePortfolio } from '../lib/iol.js';
-import { sendMessage, sendMessageWithButtons, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
+import { sendMessage, sendMessageWithButtons, sendForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
   addToWatchlist,
@@ -522,7 +522,16 @@ export default async function handler(req, res) {
   const text = mappedText ?? parseCommand(msg.text);
 
   const userId = msg.from?.id;
-  // Comando /buscar TICKER — sin estado conversacional
+
+  // Detectar respuesta al force_reply de "Agregar instrumento" (stateless)
+  // reply_to_message.text contiene el texto del mensaje al que se responde
+  const replyToText = msg.reply_to_message?.text ?? '';
+  if (replyToText.includes('Agregar instrumento') && isAuthorized(msg)) {
+    await handleSearchInstrumento(rawText);
+    return res.status(200).end('ok');
+  }
+
+  // Comando /buscar TICKER — alternativa sin force_reply
   const buscarMatch = text.match(/^buscar\s+(\S+)$/);
 
   const siMatch     = text.match(/^si\s+([1-5](?:\s+[1-5])*)$/);
@@ -560,14 +569,8 @@ export default async function handler(req, res) {
     if (!isAuthorized(msg)) return res.status(200).end('ok');
 
     if (text === 'agregar') {
-      await sendMessage(
-        `📝 *Agregar instrumento a watchlist*\n\n` +
-        `Mandá: */buscar TICKER*\n\n` +
-        `Ejemplos:\n` +
-        `• /buscar CRM\n` +
-        `• /buscar NVDA\n` +
-        `• /buscar AL35\n` +
-        `• /buscar AAPL`
+      await sendForceReply(
+        'Agregar instrumento a tu watchlist\n\nEscribí el ticker y envialo como respuesta a este mensaje:\nEjemplos: CRM, NVDA, AL35, AAPL'
       );
     } else if (text === 'analizar') {
       await handleAnalisis();
