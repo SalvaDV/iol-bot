@@ -1,4 +1,4 @@
-import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, roundToTick, searchInstrumento, normalizePortfolio } from '../lib/iol.js';
+import { getToken, crearOrden, getPortfolio, getCotizacion, getCuenta, getOrden, extractPrecio, extractEfectivo, roundToTick, searchInstrumento, normalizePortfolio } from '../lib/iol.js';
 import { sendMessage, sendMessageWithButtons, replyForceReply, answerCallbackQuery, removeButtons } from '../lib/telegram.js';
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
@@ -165,18 +165,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
       const pct = getPct(pending);
       const cuenta = await getCuenta(token);
 
-      // IOL puede devolver el saldo en distintos campos/niveles; probamos varios
-      const c0 = cuenta.cuentas?.[0];
-      const c1 = cuenta.cuentas?.[1];
-      // Buscar la cuenta en pesos (la que tiene mayor disponible, o la de moneda peso)
-      const cuentaPesos = [c0, c1].find(c => c?.moneda?.toLowerCase?.().includes('peso')) ??
-                          [c0, c1].sort((a, b) => (b?.disponible ?? 0) - (a?.disponible ?? 0))[0];
-      const efectivoLive =
-        cuentaPesos?.disponible ??
-        cuentaPesos?.saldo ??
-        cuenta.disponible ??
-        cuenta.saldo ??
-        0;
+      // hrs24.disponibleOperar incluye fondos inmediatos + T+1 (el total operable con plazo t2)
+      const efectivoLive = extractEfectivo(cuenta);
 
       // Fallback al efectivo guardado en la señal si el live vino 0 (probable fallo de campo)
       efectivoActual = efectivoLive > 0 ? efectivoLive : (pending.ef_pre ?? 0);
@@ -323,7 +313,7 @@ async function handlePortafolio() {
   try {
     const token = await getToken();
     const [portfolio, cuenta] = await Promise.all([getPortfolio(token), getCuenta(token)]);
-    const efectivo = cuenta.cuentas?.[0]?.disponible ?? 0;
+    const efectivo = extractEfectivo(cuenta);
     const titulos = normalizePortfolio(portfolio);
 
     if (titulos.length === 0) {
