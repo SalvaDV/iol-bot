@@ -3,6 +3,7 @@ import { sendMessage, sendMessageWithButtons, replyForceReply, answerCallbackQue
 import {
   getPendingSignals, updateSignalStatus, logTrade, updateTrade, cancelAllPending, getRecentTrades,
   getUserState, setUserState, clearUserState, addToWatchlist, getBotConfig, setBotConfig, getCooldowns,
+  getPositionHighs, upsertPositionHigh, deletePositionHigh,
 } from '../lib/supabase.js';
 import { runAdvisor } from '../lib/advisor.js';
 import { preTradeCheck } from '../lib/preTradeCheck.js';
@@ -515,6 +516,72 @@ async function handleCallbackQuery(cb) {
     }
   } else if (data === 'scan_ignore') {
     await sendMessage('👍 Entendido — posición mantenida. El bot seguirá monitoreando.');
+
+  } else if (data?.startsWith('tp_sell:')) {
+    // formato: tp_sell:SYM:QTY:PRECIO:LEVEL  (LEVEL = 1 o 2)
+    const parts   = data.split(':');
+    const sym     = parts[1];
+    const qty     = parseInt(parts[2]);
+    const precio  = parseFloat(parts[3]);
+    const level   = parseInt(parts[4]);
+    if (!sym || isNaN(qty) || isNaN(precio) || isNaN(level)) {
+      await sendMessage('❌ Error al parsear la orden de toma de ganancias.');
+      return;
+    }
+    const mercadoStatus = getMercadoStatus();
+    if (!mercadoStatus.abierto) {
+      await sendMessage(`🔴 *Mercado cerrado* — ${mercadoStatus.motivo}\nLa orden se enviará igual pero puede no ejecutarse hoy.`);
+    }
+    try {
+      const token  = await getToken();
+      const orden  = await crearOrden(token, { simbolo: sym, cantidad: qty, precio, operacion: 'venta' });
+      const ordenNum = orden.numero ?? orden.id ?? orden.nroOperacion ?? null;
+      await logTrade({
+        fecha:        new Date().toISOString().slice(0, 10),
+        hora:         new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+        simbolo:      sym,
+        accion:       `venta_parcial_${level}`,
+        precio,
+        cantidad:     qty,
+        monto:        Math.round(precio * qty),
+        senales:      [`tp_parcial_${level}`],
+        efectivo_pre: 0,
+      }).catch(() => {});
+
+      // Actualizar state: marcar nivel como tomado (y limpiar alerted)
+      const highs = await getPositionHighs().catch(() => ({}));
+      const state = highs[sym] ?? {};
+      const update = level === 1
+        ? { ...state, partial_1_taken: true, partial_1_alerted: false }
+        : { ...state, partial_2_taken: true, partial_2_alerted: false };
+      await upsertPositionHigh(sym, update).catch(() => {});
+
+      await sendMessage(
+        `✅ *Toma de ganancias ${level === 1 ? '#1' : '#2'} ejecutada*\n\n` +
+        `📉 *${sym}* — VENTA PARCIAL\n` +
+        `📦 ${qty} u. @ $${precio.toLocaleString('es-AR')}\n` +
+        `💰 Monto estimado: $${Math.round(precio * qty).toLocaleString('es-AR')} ARS\n` +
+        `🔑 Orden #${ordenNum ?? 'N/A'}\n\n` +
+        `${level === 1 ? '📌 Las unidades restantes siguen activas con trailing stop.' : '🚀 Las unidades restantes corren libres con trailing stop activo.'}`
+      );
+    } catch (e) {
+      await sendMessage(`❌ Error al ejecutar toma de ganancias: ${e.message}`);
+    }
+
+  } else if (data?.startsWith('tp_ignore:')) {
+    // formato: tp_ignore:SYM:LEVEL
+    const parts = data.split(':');
+    const sym   = parts[1];
+    const level = parseInt(parts[2]);
+    if (sym && !isNaN(level)) {
+      await sendMessage(
+        `👍 *Dejando correr ${sym}*\n` +
+        `El bot no volverá a alertar por el nivel ${level === 1 ? '+15%' : '+20%'}.\n` +
+        `El trailing stop sigue activo para proteger ganancias.`
+      );
+    } else {
+      await sendMessage('👍 Posición mantenida. El bot sigue monitoreando.');
+    }
   }
 }
 
