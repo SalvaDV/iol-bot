@@ -143,6 +143,8 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     }
 
     let cantidadFinal, precioLimite;
+    // efectivoActual se necesita fuera del if/else para log y cálculo de efectivo_post
+    let efectivoActual = pending.ef_pre ?? 0;
 
     if (pending.dir === 'venta') {
       const portfolio = await getPortfolio(token);
@@ -177,7 +179,7 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
         0;
 
       // Fallback al efectivo guardado en la señal si el live vino 0 (probable fallo de campo)
-      const efectivoActual = efectivoLive > 0 ? efectivoLive : (pending.ef_pre ?? 0);
+      efectivoActual = efectivoLive > 0 ? efectivoLive : (pending.ef_pre ?? 0);
       const fuenteEfectivo = efectivoLive > 0 ? 'live' : 'guardado al analizar';
 
       if (precioLimite <= 0) {
