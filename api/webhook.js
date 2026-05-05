@@ -223,8 +223,18 @@ async function handleConfirmN(n, { skipCheck = false } = {}) {
     // Buscar el número de orden en todos los campos posibles
     const ordenNum = orden.numero ?? orden.id ?? orden.nroOperacion ?? orden.numeroOperacion ??
                      orden.nro ?? orden.orderNumber ?? orden.numeroPedido ?? null;
-    const ordenRaw = JSON.stringify(orden).slice(0, 400);
-    console.log('[crearOrden] response:', ordenRaw);
+
+    // Si IOL aceptó pero no devolvió número, advertir — puede ser rechazo silencioso
+    if (!ordenNum) {
+      console.warn('[crearOrden] sin número de orden — respuesta IOL:', JSON.stringify(orden).slice(0, 400));
+      await sendMessage(
+        `⚠️ *IOL no devolvió número de orden para ${pending.simbolo}*\n\n` +
+        `Respuesta: \`${JSON.stringify(orden).slice(0, 300)}\`\n\n` +
+        `Verificá manualmente en IOL si la orden quedó registrada antes de reintentar.`
+      );
+      await updateSignalStatus(pending.id, 'cancelado');
+      return;
+    }
 
     await updateSignalStatus(pending.id, 'ejecutado');
     // Log inicial con precio live (mejor estimación antes de confirmar ejecución)
