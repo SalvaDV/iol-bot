@@ -400,6 +400,16 @@ async function handlePrecio(simbolo) {
   }
 }
 
+async function handleDebugCuenta() {
+  try {
+    const token = await getToken();
+    const cuenta = await getCuenta(token);
+    await sendMessage(`🔬 *Raw /api/v2/estadocuenta*\n\`\`\`\n${JSON.stringify(cuenta, null, 2).slice(0, 3000)}\n\`\`\``);
+  } catch (err) {
+    await sendMessage(`❌ Error: \`${err.message}\``);
+  }
+}
+
 async function handleDebugCot(simbolo) {
   try {
     const token = await getToken();
@@ -669,6 +679,8 @@ export default async function handler(req, res) {
     await handleSearchInstrumento(buscarMatch[1]);
   } else if (precioMatch) {
     await handlePrecio(precioMatch[1]);
+  } else if (text === 'debug cuenta') {
+    if (isAuthorized(msg)) await handleDebugCuenta();
   } else if (debugMatch) {
     await handleDebugCot(debugMatch[1]);
   } else if (text === 'ayuda' || text === 'help' || text === 'start') {
