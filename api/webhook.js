@@ -478,6 +478,25 @@ async function handleCallbackQuery(cb) {
 
   if (data === 'no') {
     await handleCancelAll();
+  } else if (data === 'si_todas') {
+    const signals = await getPendingSignals().catch(() => []);
+    if (signals.length === 0) {
+      await sendMessage('⚠️ No hay propuestas pendientes.');
+    } else {
+      const nums = signals
+        .map(s => parseInt(s.signals?.[0]?.replace('propuesta:', '')))
+        .filter(n => !isNaN(n))
+        .sort((a, b) => a - b);
+      await sendMessage(`✅ Ejecutando ${nums.length} propuesta(s): ${nums.map(n => `#${n}`).join(', ')}...`);
+      for (const n of nums) await handleConfirmN(n);
+    }
+  } else if (data === 'mas_propuestas') {
+    await sendMessage('🔄 *Buscando más propuestas...*\nAnalizando alternativas, esperá ~40 segundos.');
+    try {
+      await handleAnalisis();
+    } catch (e) {
+      await sendMessage(`❌ Error: ${e.message}`).catch(() => {});
+    }
   } else if (data?.startsWith('si:')) {
     const n = parseInt(data.replace('si:', ''));
     if (!isNaN(n)) await handleConfirmN(n);
@@ -683,9 +702,11 @@ export default async function handler(req, res) {
       `📋 *Historial* — últimas operaciones\n` +
       `📌 *Estado* — propuestas pendientes\n` +
       `💵 *Precio Dolar* — cotizaciones MEP/CCL/blue\n\n` +
+      `🔄 */mas* — pedir más propuestas alternativas\n` +
       `🛑 */pausar* — detener trading automático\n` +
       `▶️ */reanudar* — reactivar trading automático\n` +
       `🔎 */cooldowns* — ver qué símbolos están en cooldown\n\n` +
+      `_Para confirmar varias: /si 1 2 3_\n` +
       `_Estado del bot: ${estadoBot}_\n` +
       `_También: /buscar TICKER, /precio TICKER_`
     );
@@ -722,6 +743,9 @@ export default async function handler(req, res) {
         'Agregar instrumento a tu watchlist\n\nEscribí el ticker como respuesta a este mensaje:\nEjemplos: CRM, NVDA, AL35, AAPL'
       );
     } else if (text === 'analizar') {
+      await handleAnalisis();
+    } else if (text === 'mas' || text === 'más' || text === 'mas propuestas' || text === 'más propuestas') {
+      await sendMessage('🔄 *Buscando más propuestas...*\nAnalizando alternativas, esperá ~40 segundos.');
       await handleAnalisis();
     } else if (siMatch) {
       const nums = [...new Set(siMatch[1].trim().split(/\s+/).map(Number))].sort();
